@@ -222,6 +222,13 @@ class Manager(Agent):
         a = self.broker.account()
         spy = (self.md.snapshots(["SPY"]).get("SPY") or {}).get("price")
         db.execute("INSERT OR REPLACE INTO equity VALUES (?,?,?,?)", (db.now_iso(), a["equity"], a["cash"], spy))
+        mode = "restricted" if risk.pdt_restricted(a) else "unlocked"
+        prev = db.kv_get("pdt_mode")
+        if prev and prev != mode:
+            db.event(self.name, "Account is above $25k: day-trade limit lifted, all desks unlocked to full position counts"
+                     if mode == "unlocked" else "Account fell below $25k: back to 3 day trades per 5 days and fewer, "
+                     "bigger positions", "info" if mode == "unlocked" else "warning")
+        db.kv_set("pdt_mode", mode)
         if not db.kv_get("start"):
             db.kv_set("start", {"at": db.now_iso(), "equity": a["equity"], "spy": spy})
 

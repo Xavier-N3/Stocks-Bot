@@ -156,7 +156,7 @@ class Trader(Agent):
             return
         scored = brain.score_live(d, champ, fdf)
         cands = scored[scored["score"] > scored["thr"]]
-        slots = self.desk.max_positions - len(self.broker.ledger(d))
+        slots = risk.max_positions(d, acct) - len(self.broker.ledger(d))
         cands = cands.head(max(0, slots) * 2)
         if cands.empty:
             self._note("brain found no stock above its entry threshold")

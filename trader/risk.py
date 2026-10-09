@@ -49,6 +49,19 @@ def symbol_blocked(desk, symbol, streak=3, days=5) -> bool:
     return datetime.now(timezone.utc) - last < timedelta(days=days)
 
 
+def pdt_restricted(account: dict) -> bool:
+    """True while the account is under the $25k pattern-day-trader line. Uses the LOWER of current equity and
+    yesterday's close (the rule is judged on the prior close), with a small safety buffer."""
+    eq = min(account.get("equity") or 0, account.get("last_equity") or account.get("equity") or 0)
+    return eq < config.PDT_EQUITY * (1 + config.PDT_BUFFER)
+
+
+def max_positions(desk_name, account: dict) -> int:
+    """Small account: fewer, bigger positions. Over $25k: the desk's full position count."""
+    full = config.DESKS[desk_name].max_positions
+    return min(full, config.SMALL_ACCOUNT_MAX_POSITIONS[desk_name]) if pdt_restricted(account) else full
+
+
 def can_buy(desk_name, account: dict, alp_positions: dict) -> tuple:
     desk = config.DESKS[desk_name]
     if config.KILL_SWITCH.exists():
@@ -66,11 +79,12 @@ def can_buy(desk_name, account: dict, alp_positions: dict) -> tuple:
         return False, "desk daily loss limit reached"
     n_open = len(db.query("SELECT id FROM positions WHERE desk=? AND status IN ('pending','open','closing')",
                           (desk_name,)))
-    if n_open >= desk.max_positions:
-        return False, f"desk at max positions ({desk.max_positions})"
+    cap = max_positions(desk_name, account)
+    if n_open >= cap:
+        return False, f"desk at max positions ({cap})"
     # Under $25k, only 3 day trades are allowed per 5 business days. Count open day positions as
     # day trades already "spent" (each one will be closed today), so we can never trip the limit.
-    if desk_name == "day" and eq < 25_000 and account.get("daytrade_count", 0) + n_open >= 3:
+    if desk_name == "day" and pdt_restricted(account) and account.get("daytrade_count", 0) + n_open >= 3:
         return False, "pattern-day-trader rule: under $25k, only 3 day trades per 5 days (limit reached)"
     return True, ""
 
@@ -82,7 +96,7 @@ def position_qty(desk_name, account, alp_positions, price, stop_pct, conviction)
     prices = {s: p["price"] for s, p in alp_positions.items()}
     sleeve_cap = eq * sleeves()[desk_name]
     prof = config.PROFILE
-    slot = sleeve_cap / desk.max_positions * prof["slot"] * max(0.25, min(conviction, prof["conv_cap"])) * size_mult(desk_name)
+    slot = sleeve_cap / max_positions(desk_name, account) * prof["slot"] * max(0.25, min(conviction, prof["conv_cap"])) * size_mult(desk_name)
     room = sleeve_cap - desk_exposure(desk_name, prices)
     cash = account["cash"] - pending_buys_notional() - config.CASH_RESERVE_PCT * eq   # never use margin
     risk_cap = desk.risk_per_trade * prof["risk"] * eq / max(stop_pct, 1e-4)

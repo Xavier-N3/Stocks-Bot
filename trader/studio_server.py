@@ -136,7 +136,7 @@ def dashboard():
         led = b.ledger(d)
         upl = sum(alp[p["symbol"]]["upl"] for p in led if p["symbol"] in alp)
         desks.append({"id": d, "title": desk.title, "brain": brain.status(champ), "sleeve": sl[d],
-                      "size_mult": risk.size_mult(d), "positions": len(led), "max_positions": desk.max_positions,
+                      "size_mult": risk.size_mult(d), "positions": len(led), "max_positions": risk.max_positions(d, acct) if acct else desk.max_positions,
                       "invested": risk.desk_exposure(d, prices), "capital": (acct.get("equity") or 0) * sl[d],
                       "trades": allt["n"], "wins": allt["w"] or 0, "realized": allt["p"] or 0,
                       "avg": allt["a"], "unrealized": upl,

@@ -114,6 +114,12 @@ ACCOUNT_DAILY_LOSS_PCT = _f("ACCOUNT_DAILY_LOSS_PCT", PROFILE["daily"])  # all d
 CASH_RESERVE_PCT = _f("CASH_RESERVE_PCT", PROFILE["reserve"])          # never spend the last bit of cash
 PROBATION_TRADING = _b("PROBATION_TRADING", True)   # trade smaller while no edge is proven yet
 PROBATION_SIZE = _f("PROBATION_SIZE", PROFILE["probation"])
+# US pattern-day-trader rule: below $25k (previous close), only 3 day trades per 5 business days.
+# Below the line the desks automatically use fewer, bigger positions; above it they unlock full size.
+PDT_EQUITY = 25_000.0
+PDT_BUFFER = _f("PDT_BUFFER", 0.02)          # need 2% above $25k before unlocking, so a dip doesn't trip the rule
+SMALL_ACCOUNT_MAX_POSITIONS = {"day": _i("SMALL_MAX_POSITIONS_DAY", 2), "swing": _i("SMALL_MAX_POSITIONS_SWING", 5),
+                               "long": _i("SMALL_MAX_POSITIONS_LONG", 6)}
 REPORT_TIMES_ET = _s("REPORT_TIMES_ET", "00:30,08:30,16:30")
 
 
