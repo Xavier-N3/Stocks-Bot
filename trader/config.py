@@ -194,6 +194,8 @@ DESKS = {
 # Only coins that trade nearly every hour on Alpaca. Others (DOGE, LTC, LINK, AVAX, ...) go 20-40% of hours
 # with no trades there, so their prices are unreliable for both testing and trading.
 CRYPTO_UNIVERSE = _list("CRYPTO_SYMBOLS", "BTC/USD,ETH/USD,SOL/USD,XRP/USD")
+CRYPTO_TRAIN_EVERY_MIN = _i("CRYPTO_TRAIN_EVERY_MIN", 15)   # how often the lab retrains crypto until it's cleared
+LAB_WORKERS = _i("LAB_WORKERS", max(1, min(6, (os.cpu_count() or 2) - 4)))  # CPU cores used for training
 CRYPTO_ENABLED_DEFAULT = _b("CRYPTO_ENABLED", True)   # the Studio toggle overrides this at runtime
 
 

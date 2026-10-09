@@ -46,7 +46,7 @@ class Lab(Agent):
             return True
         age = datetime.now(timezone.utc) - datetime.fromisoformat(last)
         if name == "crypto" and brain.status(brain.champion("crypto")) != "active":
-            return age >= timedelta(minutes=60)          # keep training hourly until crypto is good enough
+            return age >= timedelta(minutes=config.CRYPTO_TRAIN_EVERY_MIN)   # keep training until good enough
         req = db.kv_get(f"evolve_request:{name}")
         if req and req > last and age >= timedelta(minutes=config.DESKS[name].evolve_cooldown_min):
             return True
@@ -99,11 +99,13 @@ class Lab(Agent):
         first = champ is None
         market_open = self.broker.clock()["is_open"]
         budget = 300 if first else (45 if name == "day" and market_open else 150)
-        gens = 40 if first else (25 if name == "crypto" else 15)
+        gens = 40 if first else (40 if name == "crypto" else 15)
+        pop_size = 64 if name == "crypto" else 32
         pop = db.kv_get(f"population:{name}")
-        self.activity(f"Breeding 32 {name} brains for up to {gens} generations on {len(ds['X']):,} historical setups")
+        self.activity(f"Breeding {pop_size} {name} brains on {config.LAB_WORKERS} CPU cores, up to {gens} generations "
+                      f"on {len(ds['X']):,} historical setups")
         t0 = time.time()
-        pop, cands, ran = evolution.evolve(ds, desk, pop, gens, 32, budget)
+        pop, cands, ran = evolution.evolve(ds, desk, pop, gens, pop_size, budget, workers=config.LAB_WORKERS)
         db.kv_set(f"population:{name}", [np.round(v, 5).tolist() for v in pop])
         best = cands[0]
         champ_h = None

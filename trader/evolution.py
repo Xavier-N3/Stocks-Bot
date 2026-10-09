@@ -4,6 +4,7 @@ of brains is replayed over market history; the fittest breed and mutate. A new
 brain only replaces the live one if it ALSO wins on recent data it never
 trained on (the "holdout"), which is what keeps this from just memorizing the past."""
 import heapq
+from bisect import bisect_right
 import math
 import time
 
@@ -57,12 +58,16 @@ def simulate(vec, ds, desk, part="train", trades_out=None):
     dec = decode(vec, n_feats, desk)
     D = ds["date"]
     d0, d1 = (0, ds["split"]) if part == "train" else (ds["split"], ds["n_dates"])
-    rows = np.nonzero((D >= d0) & (D < d1))[0]
+    cache = ds.setdefault("_cache", {})            # same rows/features for every brain: slice them once
+    if part not in cache:
+        r0 = np.nonzero((D >= d0) & (D < d1))[0]
+        cache[part] = (r0, np.ascontiguousarray(ds["X"][r0]))
+    rows, Xp = cache[part]
     empty = {"fitness": -2.0, "trades": 0, "sharpe": 0.0, "total": 0.0, "winrate": 0.0,
              "avg": 0.0, "maxdd": 0.0}
     if len(rows) == 0:
         return empty
-    s = score(dec, ds["X"][rows])
+    s = score(dec, Xp)
     sel = s > dec["thr"]
     rows, s = rows[sel], s[sel]
     if len(rows) == 0:
@@ -111,10 +116,13 @@ def simulate(vec, ds, desk, part="train", trades_out=None):
     pnl = np.zeros(d1 - d0)
     taken = []
     heap, next_free, day_used = [], {}, {}
-    for k in range(len(rows)):
-        dd, sy = int(d[k]), int(sym[k])
+    dl, sl, el, rl = d.tolist(), sym.tolist(), exit_bar.tolist(), ret.tolist()   # plain lists: faster loop
+    n_rows, k = len(dl), 0
+    while k < n_rows:
+        dd, sy = dl[k], sl[k]
         if intraday:
             if day_used.get(dd, 0) >= maxpos or next_free.get(sy, -1) >= dd:
+                k += 1
                 continue
             day_used[dd] = day_used.get(dd, 0) + 1
             ed = dd
@@ -122,13 +130,19 @@ def simulate(vec, ds, desk, part="train", trades_out=None):
         else:
             while heap and heap[0] < dd:
                 heapq.heappop(heap)
-            if len(heap) >= maxpos or next_free.get(sy, -1) >= dd:
+            if len(heap) >= maxpos:
+                # portfolio full: skip straight to the first signal after the earliest exit
+                k = max(k + 1, bisect_right(dl, heap[0]))
                 continue
-            ed = dd + 1 + int(exit_bar[k]) * step + (step - 1)
+            if next_free.get(sy, -1) >= dd:
+                k += 1
+                continue
+            ed = dd + 1 + el[k] * step + (step - 1)
             heapq.heappush(heap, ed)
             next_free[sy] = ed
-        pnl[min(ed, d1 - 1) - d0] += ret[k] / maxpos
+        pnl[min(ed, d1 - 1) - d0] += rl[k] / maxpos
         taken.append(k)
+        k += 1
 
     n = len(taken)
     if n == 0:
@@ -150,9 +164,40 @@ def simulate(vec, ds, desk, part="train", trades_out=None):
             "avg": round(float(tr.mean()), 5), "maxdd": round(maxdd, 4)}
 
 
-def evolve(ds, desk, population=None, generations=12, pop_size=32, time_budget=90, seed=None):
+# ---------------------------------------------------------------- parallel scoring (uses several CPU cores)
+_W = {}
+
+
+def _worker_init(ds, desk):
+    _W["ds"], _W["desk"] = ds, desk
+
+
+def _worker_fit(vecs):
+    return [simulate(v, _W["ds"], _W["desk"], "train")["fitness"] for v in vecs]
+
+
+def evolve(ds, desk, population=None, generations=12, pop_size=32, time_budget=90, seed=None, workers=1):
     """Runs the genetic algorithm. Returns (population, top candidates with
-    train + holdout stats, generations run)."""
+    train + holdout stats, generations run). workers > 1 scores brains on several CPU cores at once."""
+    pool = None
+    if workers > 1:
+        import os
+        from concurrent.futures import ProcessPoolExecutor
+        # one math thread per worker process, otherwise they fight over the same cores
+        for v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+            os.environ[v] = "1"
+        try:
+            pool = ProcessPoolExecutor(max_workers=workers, initializer=_worker_init, initargs=(ds, desk))
+        except Exception:
+            pool = None
+    try:
+        return _evolve(ds, desk, population, generations, pop_size, time_budget, seed, pool, workers)
+    finally:
+        if pool:
+            pool.shutdown(wait=True, cancel_futures=True)
+
+
+def _evolve(ds, desk, population, generations, pop_size, time_budget, seed, pool, workers):
     rng = np.random.default_rng(seed)
     F = len(ds["feats"])
     G = n_genes(F)
@@ -162,8 +207,15 @@ def evolve(ds, desk, population=None, generations=12, pop_size=32, time_budget=9
     t0 = time.time()
     gens = 0
     fits = None
+    def score_all(vecs):
+        if pool is None:
+            return np.array([simulate(v, ds, desk, "train")["fitness"] for v in vecs])
+        k = max(1, len(vecs) // workers + (len(vecs) % workers > 0))
+        chunks = [vecs[i:i + k] for i in range(0, len(vecs), k)]
+        return np.array([f for part in pool.map(_worker_fit, chunks) for f in part])
+
     for _ in range(generations):
-        fits = np.array([simulate(v, ds, desk, "train")["fitness"] for v in pop])
+        fits = score_all(pop)
         gens += 1
         if time.time() - t0 > time_budget:
             break
@@ -184,7 +236,7 @@ def evolve(ds, desk, population=None, generations=12, pop_size=32, time_budget=9
         new += [random_vec(F, rng) for _ in range(2)]                  # fresh blood
         pop = new
     if fits is None or len(fits) != len(pop):
-        fits = np.array([simulate(v, ds, desk, "train")["fitness"] for v in pop])
+        fits = score_all(pop)
     order = np.argsort(-fits)
     cands = []
     for i in order[:6]:
