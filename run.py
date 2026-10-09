@@ -70,6 +70,23 @@ def main():
     L.info("AI trading firm starting  -  %s", "PAPER trading" if config.ALPACA_PAPER else "LIVE MONEY")
     L.info("=" * 70)
 
+    # A different Alpaca account than last time? Reset the per-account timers and the "since start" baseline
+    # (lessons, brains, research and history are kept).
+    try:
+        from trader.broker import Broker
+        acct_id = str(Broker().client.get_account().id)
+        prev_id = db.kv_get("account_id")
+        if prev_id != acct_id:
+            for r in db.query("SELECT k FROM kv WHERE k LIKE 'last_decide:%' OR k IN ('start', 'pdt_mode')"):
+                db.execute("DELETE FROM kv WHERE k=?", (r["k"],))
+            if prev_id:
+                db.execute("UPDATE positions SET status='migrated', exit_reason='left in previous account' "
+                           "WHERE status IN ('pending','open','closing')")
+                db.event("supervisor", "New Alpaca account detected - desk timers reset, learning kept")
+            db.kv_set("account_id", acct_id)
+    except Exception as e:
+        L.warning("account check failed: %s", e)
+
     from trader import llm
     for tier in ("smart", "fast"):
         av = llm.available(tier)

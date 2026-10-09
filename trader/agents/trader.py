@@ -14,7 +14,7 @@ from ..marketdata import MarketData
 from ..timeutil import ET, et_minutes, now_et
 from .base import Agent
 
-DECIDE_EVERY_S = {"day": 300, "swing": 1800, "long": 24 * 3600}
+DECIDE_EVERY_S = {"day": 300, "swing": 1800, "long": 2 * 3600}   # long only buys into free slots, so checking often is safe
 
 
 class Trader(Agent):
@@ -157,7 +157,7 @@ class Trader(Agent):
         scored = brain.score_live(d, champ, fdf)
         cands = scored[scored["score"] > scored["thr"]]
         slots = risk.max_positions(d, acct) - len(self.broker.ledger(d))
-        cands = cands.head(max(0, slots) * 2)
+        cands = cands.head(min(max(0, slots) + 2, 12))       # a couple of spares in case some get vetoed
         if cands.empty:
             self._note("brain found no stock above its entry threshold")
             return
@@ -173,11 +173,19 @@ class Trader(Agent):
                           "features": {f: round(float(r[f]), 5) for f in champ["feats"]}})
         mode = db.kv_get(f"llm_mode:{d}") or config.LLM_TRADE_MODE   # manager may demote the AI to advisory
         self.activity(f"Asking the AI portfolio manager about {', '.join(p['symbol'] for p in picks)}")
-        verdicts = self._ai_review(picks) if mode != "off" else {}
+        # small batches keep each AI request inside the free tiers' per-minute token limits
+        batches = [picks[i:i + 6] for i in range(0, len(picks), 6)]
+        verdicts = {}
+        if mode != "off":
+            for b in batches:
+                verdicts.update(self._ai_review(b))
         # every trade the manager lets through goes to the Challenger for a pros/cons debate
         through = [dict(p, pm=verdicts.get(p["symbol"])) for p in picks
                    if not (verdicts.get(p["symbol"], {}).get("action") == "skip" and mode == "veto")]
-        debates = challenger.review(d, through, self.name) if mode != "off" else {}
+        debates = {}
+        if mode != "off":
+            for i in range(0, len(through), 6):
+                debates.update(challenger.review(d, through[i:i + 6], self.name))
         mult = config.PROBATION_SIZE if st == "probation" else 1.0
         for p in picks:
             v = verdicts.get(p["symbol"], {})
@@ -243,7 +251,7 @@ class Trader(Agent):
                 "Lessons from past trades:\n" + ("\n".join(f"- [{l['grade']}] {l['text']}" for l in lessons) or "- none yet") +
                 "\n\nCandidates:\n" + "\n".join(lines) +
                 '\n\nJSON: {"decisions": [{"symbol": "X", "action": "buy" or "skip", "size": 1.0, "reason": "short"}]}')
-        res = llm.chat(system, user, tier="smart", max_tokens=900, agent=self.name, cache_min=5)
+        res = llm.chat(system, user, tier="smart", max_tokens=900, agent=self.name, cache_min=5, local=False)
         out = {}
         if res and isinstance(res.get("json"), dict):
             for it in res["json"].get("decisions", []) or []:

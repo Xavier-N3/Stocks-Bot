@@ -155,7 +155,9 @@ def _call_ollama(model, messages, max_tokens, want_json):
         return requests.post(PROVIDERS["ollama"]["url"], json=body, timeout=600)
 
 
-def chat(system: str, user: str, tier="smart", max_tokens=1200, want_json=True, agent="", cache_min=30):
+def chat(system: str, user: str, tier="smart", max_tokens=1200, want_json=True, agent="", cache_min=30, local=True):
+    """local=False skips the slow on-PC models - used for time-critical trade decisions, which then fall back to
+    numbers-only instead of waiting minutes."""
     """Returns {"text", "json", "provider", "model"} or None if no model could answer."""
     if not config.LLM_ENABLED:
         return None
@@ -168,7 +170,7 @@ def chat(system: str, user: str, tier="smart", max_tokens=1200, want_json=True, 
 
     for prov, model in CHAINS.get(tier, []):
         p = PROVIDERS[prov]
-        if not p["key"]:
+        if not p["key"] or (prov == "ollama" and not local):
             continue
         if prov == "ollama" and not _ollama_has(model):
             continue

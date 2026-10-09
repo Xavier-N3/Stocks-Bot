@@ -51,7 +51,7 @@ def review(desk_name: str, picks: list, agent_name: str) -> dict:
             "\n\nProposed trades:\n" + "\n".join(lines) +
             '\n\nJSON: {"debates": [{"symbol": "X", "pros": ["...", "..."], "cons": ["...", "..."], '
             '"verdict": "proceed" | "reduce" | "reject", "confidence": 0..1, "reasoning": "one or two sentences"}]}')
-    res = llm.chat(system, user, tier="smart", max_tokens=1400, agent="challenger", cache_min=5)
+    res = llm.chat(system, user, tier="smart", max_tokens=1400, agent="challenger", cache_min=5, local=False)
     out = {}
     if not res or not isinstance(res.get("json"), dict):
         return out
