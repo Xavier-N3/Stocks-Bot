@@ -1,0 +1,21 @@
+# Auto-deploy: every push to main updates the cloud server and restarts the bots.
+# Off until you turn it on. To enable (GitHub repo -> Settings -> Secrets and variables -> Actions):
+#   Variables:  DEPLOY_ENABLED = true
+#   Secrets:    SSH_HOST (server IP), SSH_USER (e.g. ubuntu), SSH_KEY (the private key you use to SSH in)
+name: deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  deploy:
+    if: ${{ vars.DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update server and restart
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: bash ~/stocks-bot/deploy/update.sh

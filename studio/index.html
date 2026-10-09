@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Studio</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏡</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">🏡</span><div><b>The Studio</b><small>AI trading firm</small></div></div>
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-view="studio" role="tab">Studio</button>
+    <button class="tab" data-view="dashboard" role="tab">Dashboard</button>
+    <button class="tab" data-view="reports" role="tab">Reports</button>
+  </nav>
+  <div class="status">
+    <span id="paper" class="pill paper">PAPER</span>
+    <span id="market" class="pill">…</span>
+    <span id="clock" class="muted"></span>
+    <span class="equity"><small>Equity</small><b id="equity">—</b><em id="daychg"></em></span>
+  </div>
+</header>
+
+<main>
+  <section id="view-studio" class="view active">
+    <canvas id="world"></canvas>
+    <aside class="roster card" id="roster">
+      <div class="card-h"><b>The team</b><small>click to chat</small></div>
+      <ul id="roster-list"></ul>
+    </aside>
+    <aside class="feed card" id="feed">
+      <div class="card-h"><b>Happening now</b></div>
+      <ul id="feed-list"></ul>
+    </aside>
+    <div class="hint card">Drag to look around · scroll to zoom · click a bot to chat · click the big market screen for the dashboard</div>
+    <div id="tooltip" class="tooltip"></div>
+  </section>
+
+  <section id="view-dashboard" class="view">
+    <div class="dash" id="dash"></div>
+  </section>
+
+  <section id="view-reports" class="view">
+    <div class="reports">
+      <aside class="card rep-list">
+        <div class="card-h"><b>Reports</b><button id="rep-new" class="btn">Write one now</button></div>
+        <ul id="rep-items"></ul>
+      </aside>
+      <article class="card rep-body" id="rep-body"><p class="muted">Pick a report.</p></article>
+    </div>
+  </section>
+</main>
+
+<aside id="chat" class="chat card" aria-hidden="true">
+  <div class="chat-h">
+    <div class="avatar" id="chat-avatar"></div>
+    <div class="who"><b id="chat-name"></b><small id="chat-role"></small><small id="chat-act" class="act"></small></div>
+    <button class="x" id="chat-close" aria-label="Close chat">✕</button>
+  </div>
+  <div class="msgs" id="chat-msgs"></div>
+  <div class="chips" id="chat-chips"></div>
+  <form class="chat-f" id="chat-form">
+    <input id="chat-input" autocomplete="off" placeholder="Say something…">
+    <button class="btn" type="submit">Send</button>
+  </form>
+</aside>
+
+<script src="world.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

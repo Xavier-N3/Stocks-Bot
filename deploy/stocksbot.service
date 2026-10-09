@@ -1,0 +1,18 @@
+[Unit]
+Description=AI trading firm (9 agents + Studio)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__APP_DIR__
+ExecStart=__APP_DIR__/.venv/bin/python run.py
+Restart=always
+RestartSec=20
+KillSignal=SIGTERM
+TimeoutStopSec=60
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

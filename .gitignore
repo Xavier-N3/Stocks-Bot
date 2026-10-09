@@ -1,0 +1,13 @@
+# secrets - never commit
+.env
+# generated / local
+.venv/
+__pycache__/
+*.pyc
+data/
+logs/
+state/
+reports/
+library/
+STOP_TRADING
+_old_version_backup.zip
