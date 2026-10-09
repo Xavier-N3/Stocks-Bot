@@ -6,10 +6,10 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from alpaca.data.enums import Adjustment, DataFeed
-from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.historical import CryptoHistoricalDataClient, StockHistoricalDataClient
 from alpaca.data.historical.news import NewsClient
 from alpaca.data.historical.screener import ScreenerClient
-from alpaca.data.requests import (MarketMoversRequest, MostActivesRequest, NewsRequest,
+from alpaca.data.requests import (CryptoBarsRequest, CryptoSnapshotRequest, MarketMoversRequest, MostActivesRequest, NewsRequest,
                                   StockBarsRequest, StockSnapshotRequest)
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.trading.client import TradingClient
@@ -20,9 +20,14 @@ from . import config, db, log
 from .timeutil import ET
 
 L = log.get("data")
-TF = {"1Day": TimeFrame.Day, "15Min": TimeFrame(15, TimeFrameUnit.Minute)}
+TF = {"1Day": TimeFrame.Day, "15Min": TimeFrame(15, TimeFrameUnit.Minute), "1Hour": TimeFrame.Hour}
 _daily_lock = threading.Lock()
 _intraday_lock = threading.Lock()
+_crypto_lock = threading.Lock()
+
+
+def is_crypto(symbol: str) -> bool:
+    return "/" in symbol
 
 
 def _retry(fn, tries=3, wait=5):
@@ -41,6 +46,7 @@ class MarketData:
         k, s = config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY
         self.hist = StockHistoricalDataClient(k, s)
         self.screener = ScreenerClient(k, s)
+        self.crypto = CryptoHistoricalDataClient(k, s)
         self.news = NewsClient(k, s)
         self.trading = TradingClient(k, s, paper=config.ALPACA_PAPER)
 
@@ -122,9 +128,55 @@ class MarketData:
                 n += len(df)
             return n
 
+    def update_crypto(self, symbols, days=None) -> int:
+        """Hourly crypto bars (24/7)."""
+        days = days or config.DESKS["crypto"].history_days
+        with _crypto_lock:
+            now = datetime.now(timezone.utc)
+            last = db.last_bar_ts("1Hour")
+            new = [s for s in symbols if s not in last]
+            old = [s for s in symbols if s in last]
+            n = 0
+            for group, start in ((new, now - timedelta(days=days)), (old, now - timedelta(days=3))):
+                if not group:
+                    continue
+                try:
+                    df = _retry(lambda: self.crypto.get_crypto_bars(
+                        CryptoBarsRequest(symbol_or_symbols=group, timeframe=TF["1Hour"], start=start)).df)
+                except Exception as e:
+                    L.warning("crypto bars failed: %s", e)
+                    continue
+                if df is None or df.empty:
+                    continue
+                df = df.reset_index().rename(columns={"timestamp": "ts", "open": "o", "high": "h", "low": "l",
+                                                      "close": "c", "volume": "v"})
+                df["ts"] = pd.to_datetime(df["ts"], utc=True)
+                db.save_bars(df[["symbol", "ts", "o", "h", "l", "c", "v"]], "1Hour")
+                n += len(df)
+            return n
+
     # ------------------------------------------------------------ live
-    def snapshots(self, symbols) -> dict:
+    def crypto_snapshots(self, symbols) -> dict:
         out = {}
+        try:
+            snaps = _retry(lambda: self.crypto.get_crypto_snapshot(CryptoSnapshotRequest(symbol_or_symbols=symbols)))
+        except Exception as e:
+            L.warning("crypto snapshot failed: %s", e)
+            return out
+        for sym, s in snaps.items():
+            if s is None or s.latest_trade is None:
+                continue
+            d, p = s.daily_bar, s.previous_daily_bar
+            out[sym] = {"price": float(s.latest_trade.price), "time": s.latest_trade.timestamp,
+                        "day_open": float(d.open) if d else None, "day_high": float(d.high) if d else None,
+                        "day_low": float(d.low) if d else None, "day_volume": float(d.volume) if d else 0.0,
+                        "prev_close": float(p.close) if p else None}
+        return out
+
+    def snapshots(self, symbols) -> dict:
+        coins = [s for s in symbols if is_crypto(s)]
+        out = self.crypto_snapshots(coins) if coins else {}
+        symbols = [s for s in symbols if not is_crypto(s)]
         for i in range(0, len(symbols), 200):
             chunk = symbols[i:i + 200]
             try:
@@ -184,8 +236,9 @@ class MarketData:
         rows = []
         for i in range(0, len(symbols), 25):
             chunk = symbols[i:i + 25]
+            ask = {s.replace("/", ""): s for s in chunk}          # crypto news uses BTCUSD, we use BTC/USD
             try:
-                res = _retry(lambda: self.news.get_news(NewsRequest(symbols=",".join(chunk), start=start,
+                res = _retry(lambda: self.news.get_news(NewsRequest(symbols=",".join(ask), start=start,
                                                                     limit=50, exclude_contentless=False)))
             except Exception as e:
                 L.warning("news failed: %s", e)
@@ -193,6 +246,7 @@ class MarketData:
             items = res.data.get("news", []) if hasattr(res, "data") else []
             for n in items:
                 for sym in n.symbols or []:
+                    sym = ask.get(sym, sym)
                     if sym in chunk:
                         rows.append((f"alp{n.id}:{sym}", sym, n.created_at.isoformat(), n.source or "alpaca",
                                      n.headline, (n.summary or "")[:500], n.url or ""))

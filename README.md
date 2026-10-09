@@ -1,6 +1,6 @@
 # AI Trading Firm (paper trading)
 
-Nine AI workers run together on your PC, around the clock, trading your **Alpaca paper account** (fake money):
+Eleven AI workers run together on your PC, around the clock, trading your **Alpaca paper account** (fake money):
 
 ```
                  ┌──────────────────────── MANAGER ────────────────────────┐
@@ -87,6 +87,16 @@ inside the same background process as the bots.
 
 The PC must be on (and not asleep) for it to run 24/7. It keeps Windows from idle-sleeping while it runs, but
 closing the laptop lid can still sleep it. Set *Settings > System > Power > Lid close = Do nothing* if needed.
+
+## Crypto desk (switch it on/off in the Studio)
+
+Nova (researcher) and Satoshi (trader) trade **BTC, ETH, SOL and XRP 24/7** on hourly bars from a desk in the lab
+corner. It has the smallest budget (5% of equity, max 2 positions) and the strictest rules in the firm. It only buys
+when its brain beat a high bar on unseen data, the AI portfolio manager approves, the Challenger says *proceed* with
+at least 70% confidence, and research sentiment isn't negative. If no AI is available it doesn't trade. Each buy
+gets a protective stop order at Alpaca; Satoshi sells at the target or time limit. The **₿ Crypto ON/OFF** button
+in the Studio's top bar stops new crypto trades (open ones are still managed until they close). Other coins are
+excluded on purpose: on Alpaca they go 20-40% of hours without a single trade, so their prices are unreliable.
 
 ## Risk profile (`RISK_PROFILE` in `.env`)
 

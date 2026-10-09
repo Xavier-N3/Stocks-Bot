@@ -51,19 +51,20 @@ def _daily_one(g):
     return f
 
 
-def daily_features(bars: pd.DataFrame) -> pd.DataFrame:
-    """bars: symbol, ts, o, h, l, c, v (many symbols, must include SPY)."""
+def daily_features(bars: pd.DataFrame, bench: str = "SPY", hourly: bool = False) -> pd.DataFrame:
+    """bars: symbol, ts, o, h, l, c, v (many symbols, must include the benchmark). Also used for hourly crypto
+    bars, where the benchmark is BTC/USD and each "bar" is an hour instead of a day."""
     parts = []
     for sym, g in bars.groupby("symbol", sort=False):
         g = g.sort_values("ts")
         f = _daily_one(g)
         parts.append(pd.concat([g, f], axis=1))
     df = pd.concat(parts, ignore_index=True)
-    spy = df[df.symbol == "SPY"][["ts", "r20", "r60", "d_sma200"]].rename(
+    spy = df[df.symbol == bench][["ts", "r20", "r60", "d_sma200"]].rename(
         columns={"r20": "spy_r20", "r60": "spy_r60", "d_sma200": "spy_d200"})
     df = df.merge(spy, on="ts", how="left")
     df["rs60"] = df["r60"] - df["spy_r60"]
-    df["date"] = df["ts"].dt.tz_convert(ET).dt.date
+    df["date"] = df["ts"] if hourly else df["ts"].dt.tz_convert(ET).dt.date
     return df
 
 
@@ -156,11 +157,16 @@ def build_dataset(desk, bars: pd.DataFrame, holdout_frac=0.25, norm=None, start_
     if intraday:
         df = intraday_features(bars)
         df = df[(df["mins"] >= 570) & (df["mins"] <= 915)]   # decide 09:30..15:15 bar closes
+    elif desk.timeframe == "1Hour":
+        now = pd.Timestamp.now(tz="UTC")
+        bars = bars[bars["ts"] + pd.Timedelta(hours=1) <= now]           # completed hours only
+        df = daily_features(bars, desk.bench, hourly=True)
     else:
         today = now_et().date()
         bars = bars[bars["ts"].dt.tz_convert(ET).dt.date < today]   # completed days only
         df = daily_features(bars)
     df = df.replace([np.inf, -np.inf], np.nan)
+    hourly = desk.timeframe == "1Hour"
     dates = np.array(sorted(df["date"].unique()))
     date_pos = {d: i for i, d in enumerate(dates)}
     X, ATR, HI, LO, CL, D, S, SYMS, T = [], [], [], [], [], [], [], [], []
@@ -169,11 +175,11 @@ def build_dataset(desk, bars: pd.DataFrame, holdout_frac=0.25, norm=None, start_
         valid, hi, lo, cl = _paths(sub, desk.path_len, desk.path_step, intraday)
         di = sub["date"].map(date_pos).to_numpy()
         m = valid & sub[feats + ["atr"]].notna().all(axis=1).to_numpy()
-        m &= (sub["atr"] > 0).to_numpy() & (sub["c"] >= 5).to_numpy()
+        m &= (sub["atr"] > 0).to_numpy() & ((sub["c"] >= 5).to_numpy() if not hourly else True)
         sd0 = (start_dates or {}).get(sub["symbol"].iloc[0])
         if sd0:
             m &= (sub["date"].astype(str) >= sd0).to_numpy()
-        if not intraday:
+        if not intraday and not hourly:
             m &= (sub["dollar_vol"] >= 5e6).fillna(False).to_numpy()
             m &= (di % desk.decision_step) == 0
         if not m.any():
@@ -209,8 +215,15 @@ def build_dataset(desk, bars: pd.DataFrame, holdout_frac=0.25, norm=None, start_
 # ---------------------------------------------------------------- live
 def live_features(desk, symbols, today_only=True) -> pd.DataFrame:
     """Latest feature row per symbol from completed bars in the database."""
-    syms = sorted(set(symbols) | {"SPY"})
-    if desk.name == "day":
+    syms = sorted(set(symbols) | {desk.bench})
+    if desk.timeframe == "1Hour":
+        since = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=20)).isoformat()
+        bars = db.load_bars(syms, "1Hour", since)
+        if bars.empty:
+            return pd.DataFrame()
+        bars = bars[bars["ts"] + pd.Timedelta(hours=1) <= pd.Timestamp.now(tz="UTC")]
+        df = daily_features(bars, desk.bench, hourly=True)
+    elif desk.name == "day":
         since = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=12)).isoformat()
         bars = db.load_bars(syms, "15Min", since)
         if bars.empty:

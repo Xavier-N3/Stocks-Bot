@@ -90,7 +90,7 @@ def simulate(vec, ds, desk, part="train", trades_out=None):
     tgt = np.maximum(dec["target"] * atr, desk.min_stop)
     lo, hi, cl = ds["lo"][rows, :Hh], ds["hi"][rows, :Hh], ds["cl"][rows, :Hh]
     sh = lo <= -stop[:, None]
-    th = hi >= tgt[:, None]
+    th = (cl if desk.close_targets else hi) >= tgt[:, None]
     fs = np.where(sh.any(1), sh.argmax(1), Hh)
     ft = np.where(th.any(1), th.argmax(1), Hh)
     r_ = np.arange(len(rows))
@@ -100,6 +100,8 @@ def simulate(vec, ds, desk, part="train", trades_out=None):
     # gap through a level: fill at the middle of that bar, not at the level
     stop_fill = np.where(hi[r_, fsi] < -stop, (hi[r_, fsi] + lo[r_, fsi]) / 2, -stop)
     tgt_fill = np.where(lo[r_, fti] > tgt, (hi[r_, fti] + lo[r_, fti]) / 2, tgt)
+    if desk.close_targets:
+        tgt_fill = cl[r_, fti]                     # sold at that bar's close, like the live bot does
     ret = np.where(stopped, stop_fill, np.where(targeted, tgt_fill, cl[:, Hh - 1]))
     ret = ret - 2 * desk.cost_per_side
     exit_bar = np.where(stopped, fs, np.where(targeted, ft, Hh - 1))
@@ -135,7 +137,7 @@ def simulate(vec, ds, desk, part="train", trades_out=None):
     eq = np.cumsum(pnl)
     maxdd = float(np.max(np.maximum.accumulate(np.r_[0, eq]) - np.r_[0, eq]))
     sd = pnl.std()
-    sharpe = float(pnl.mean() / sd * math.sqrt(252)) if sd > 0 else 0.0
+    sharpe = float(pnl.mean() / sd * math.sqrt(desk.periods_per_year)) if sd > 0 else 0.0
     need = desk.min_trades * (1.0 if part == "train" else 0.35)
     fitness = sharpe * min(1.0, n / need) - 2.0 * max(0.0, maxdd - 0.25)
     if n < 5:

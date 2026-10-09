@@ -23,7 +23,8 @@ def make_agents():
     from trader.agents.trader import Trader
     from trader.agents.challenger import Challenger
     return [Researcher("day"), Trader("day"), Researcher("swing"), Trader("swing"),
-            Researcher("long"), Trader("long"), Challenger(), Manager(), Lab()]
+            Researcher("long"), Trader("long"), Researcher("crypto"), Trader("crypto"),
+            Challenger(), Manager(), Lab()]
 
 
 def _alive(pid):

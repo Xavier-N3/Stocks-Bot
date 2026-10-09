@@ -174,7 +174,7 @@ def build(broker, since_iso=None) -> str:
     # ---- health
     rows = []
     for name in ["day_researcher", "day_trader", "swing_researcher", "swing_trader", "long_researcher",
-                 "long_trader", "challenger", "manager", "lab"]:
+                 "long_trader", "crypto_researcher", "crypto_trader", "challenger", "manager", "lab"]:
         hb = db.kv_get(f"heartbeat:{name}") or {}
         rows.append([name, _t(hb.get("at", "")), hb.get("status", "never ran")[:80]])
     errs = db.query("SELECT ts, agent, level, msg FROM events WHERE ts>=? AND level IN ('error','warning') "

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
-from .. import brain, config, db, evolution, features, universe
+from .. import brain, config, db, evolution, features, risk, universe
 from ..broker import Broker
 from .base import Agent
 
@@ -31,8 +31,11 @@ class Lab(Agent):
                 self._evolve(name)
 
     def _data_ready(self, name):
-        tf, need = ("15Min", 26 * 20) if name == "day" else ("1Day", 400)
-        r = db.one("SELECT COUNT(*) n FROM bars WHERE symbol='SPY' AND tf=?", (tf,))
+        if name == "crypto" and not risk.crypto_enabled():
+            return False                   # switched off in the Studio: don't spend CPU on it
+        desk = config.DESKS[name]
+        tf, need = {"day": ("15Min", 26 * 20), "crypto": ("1Hour", 24 * 60)}.get(name, ("1Day", 400))
+        r = db.one("SELECT COUNT(*) n FROM bars WHERE symbol=? AND tf=?", (desk.bench, tf))
         return r["n"] >= need
 
     def _due(self, name):
@@ -49,6 +52,8 @@ class Lab(Agent):
 
     def _symbols(self, name):
         desk = config.DESKS[name]
+        if name == "crypto":
+            return sorted(set(config.CRYPTO_UNIVERSE) | {desk.bench})
         if name == "day":
             rows = db.query("SELECT symbol, COUNT(*) n FROM bars WHERE tf='15Min' GROUP BY symbol HAVING n >= ? "
                             "ORDER BY n DESC", (26 * 15,))
@@ -71,7 +76,7 @@ class Lab(Agent):
         bars = db.load_bars(self._symbols(name), desk.timeframe, since)
         norm = db.kv_get(f"norm:{name}")
         start_dates = None
-        if name != "day":   # survivorship guard: only count a stock from the day it joined the S&P 500
+        if name in ("swing", "long"):   # survivorship guard: only count a stock from the day it joined the S&P 500
             start_dates = {s: v["added"] for s, v in universe.sp500().items() if v.get("added")}
         ds = features.build_dataset(desk, bars, norm=norm, start_dates=start_dates)
         if ds is None:
@@ -79,7 +84,7 @@ class Lab(Agent):
         if norm is None:      # freeze feature scaling so every generation's brains stay comparable
             db.kv_set(f"norm:{name}", [ds["mu"].tolist(), ds["sd"].tolist()])
         self.cache[name] = (time.time(), ds)
-        self.log.info("[%s] training data: %d samples, %d symbols, %d days (holdout = last %d days)",
+        self.log.info("[%s] training data: %d samples, %d symbols, %d bars (holdout = last %d bars)",
                       name, len(ds["X"]), len(ds["symbols"]), ds["n_dates"], ds["n_dates"] - ds["split"])
         return ds
 

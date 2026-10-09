@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderClass, OrderSide, QueryOrderStatus, TimeInForce
-from alpaca.trading.requests import (GetOrderByIdRequest, GetOrdersRequest, MarketOrderRequest,
+from alpaca.trading.requests import (GetOrderByIdRequest, GetOrdersRequest, MarketOrderRequest, StopLimitOrderRequest,
                                      StopLossRequest, TakeProfitRequest)
 
 from . import config, db, log
@@ -47,9 +47,14 @@ class Broker:
         return out
 
     def alpaca_positions(self) -> dict:
-        return {p.symbol: {"qty": _f(p.qty), "avg": _f(p.avg_entry_price), "price": _f(p.current_price),
-                           "value": _f(p.market_value), "upl": _f(p.unrealized_pl),
-                           "uplpc": _f(p.unrealized_plpc)}
+        def sym(p):   # Alpaca reports crypto positions as BTCUSD; everywhere else we use BTC/USD
+            s = p.symbol
+            if "crypto" in str(p.asset_class).lower() and "/" not in s and s.endswith("USD"):
+                s = s[:-3] + "/USD"
+            return s
+        return {sym(p): {"qty": _f(p.qty), "avg": _f(p.avg_entry_price), "price": _f(p.current_price),
+                         "value": _f(p.market_value), "upl": _f(p.unrealized_pl),
+                         "uplpc": _f(p.unrealized_plpc)}
                 for p in self.client.get_all_positions()}
 
     def open_orders(self) -> list:
@@ -103,6 +108,49 @@ class Broker:
         L.info("[%s] BUY %s x%d @~%.2f  stop %.2f  target %.2f", desk, symbol, qty, price, stop_price, target_price)
         return {"id": cur.lastrowid, "order_id": str(o.id)}
 
+    def buy_crypto(self, symbol, notional, price, stop_pct, target_pct, meta: dict) -> dict:
+        """Crypto can't use bracket orders on Alpaca: buy at market now; once filled, sync() places a protective
+        stop order at Alpaca, and the crypto trader sells at the target / time limit itself (it runs 24/7)."""
+        if config.KILL_SWITCH.exists():
+            raise RuntimeError("Kill switch file STOP_TRADING present - no new buys")
+        qty = round(notional / price, 6)
+        coid = f"crypto-{symbol.replace('/', '')}-{uuid.uuid4().hex[:10]}"
+        req = MarketOrderRequest(symbol=symbol, qty=qty, side=OrderSide.BUY, time_in_force=TimeInForce.GTC,
+                                 client_order_id=coid)
+        with _lock:
+            if self.owner(symbol):
+                raise RuntimeError(f"{symbol} already held by the {self.owner(symbol)} desk")
+            o = self.client.submit_order(req)
+            cur = db.execute(
+                "INSERT INTO positions (desk, symbol, status, qty, entry_price, entry_time, stop_price, "
+                "target_price, stop_pct, exit_deadline, entry_order_id, leg_ids, genome_id, score, llm_json, features) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("crypto", symbol, "pending", qty, price, db.now_iso(), round(price * (1 - stop_pct), 6),
+                 round(price * (1 + target_pct), 6), stop_pct, meta.get("deadline"), str(o.id), "[]",
+                 meta.get("genome_id"), meta.get("score"), json.dumps(meta.get("llm")), json.dumps(meta.get("features"))))
+        L.info("[crypto] BUY %s x%s @~%.4f  stop -%.1f%%  target +%.1f%%", symbol, qty, price, stop_pct * 100,
+               target_pct * 100)
+        return {"id": cur.lastrowid, "order_id": str(o.id)}
+
+    def _crypto_protect(self, pos, filled_qty, fill_price):
+        """After a crypto buy fills: record the real quantity held (fees come out of the coins) and park a
+        stop-limit sell at Alpaca so the downside is protected even if this PC is off."""
+        held = self.alpaca_positions().get(pos["symbol"], {}).get("qty") or filled_qty
+        stop_price = round(fill_price * (1 - pos["stop_pct"]), 6 if fill_price < 10 else 2)
+        target_price = round(fill_price * (1 + (pos["target_price"] / pos["entry_price"] - 1)), 6 if fill_price < 10 else 2)
+        legs = []
+        try:
+            so = self.client.submit_order(StopLimitOrderRequest(
+                symbol=pos["symbol"], qty=held, side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
+                stop_price=stop_price, limit_price=round(stop_price * 0.99, 6 if fill_price < 10 else 2)))
+            legs = [str(so.id)]
+        except Exception as e:
+            L.warning("[crypto] could not place protective stop for %s: %s (the bot will watch it instead)",
+                      pos["symbol"], e)
+        db.execute("UPDATE positions SET status='open', qty=?, entry_price=?, entry_time=?, stop_price=?, "
+                   "target_price=?, leg_ids=? WHERE id=?",
+                   (held, fill_price, db.now_iso(), stop_price, target_price, json.dumps(legs), pos["id"]))
+
     def close_position(self, pos: dict, reason: str):
         """Cancel the bracket's protective legs, then sell at market."""
         with _lock:
@@ -127,9 +175,11 @@ class Broker:
             if qty <= 0:
                 db.execute("UPDATE positions SET status='open' WHERE id=?", (pos["id"],))
                 return None
+            crypto = "/" in pos["symbol"]
             req = MarketOrderRequest(symbol=pos["symbol"], qty=qty, side=OrderSide.SELL,
-                                     time_in_force=TimeInForce.DAY,   # required for fractional shares
-                                     client_order_id=f"{pos['desk']}-x-{pos['symbol']}-{uuid.uuid4().hex[:8]}"[:48])
+                                     # stocks: DAY is required for fractional shares; crypto only allows GTC/IOC
+                                     time_in_force=TimeInForce.GTC if crypto else TimeInForce.DAY,
+                                     client_order_id=f"{pos['desk']}-x-{pos['symbol'].replace('/', '')}-{uuid.uuid4().hex[:8]}"[:48])
             o = self.client.submit_order(req)
             db.execute("UPDATE positions SET status='closing', exit_order_id=?, exit_reason=? WHERE id=?",
                        (str(o.id), reason, pos["id"]))
@@ -147,7 +197,9 @@ class Broker:
                 if pos["status"] == "pending":
                     o = self.order(pos["entry_order_id"])
                     st = str(o.status.value if hasattr(o.status, "value") else o.status)
-                    if st == "filled" or (_f(o.filled_qty) > 0 and st in ("canceled", "expired")):
+                    if pos["desk"] == "crypto" and (st == "filled" or (_f(o.filled_qty) > 0 and st in ("canceled", "expired"))):
+                        self._crypto_protect(pos, _f(o.filled_qty), _f(o.filled_avg_price))
+                    elif st == "filled" or (_f(o.filled_qty) > 0 and st in ("canceled", "expired")):
                         legs = [str(l.id) for l in (o.legs or [])]
                         db.execute("UPDATE positions SET status='open', qty=?, entry_price=?, entry_time=?, "
                                    "leg_ids=? WHERE id=?",

@@ -119,7 +119,7 @@ PROBATION_SIZE = _f("PROBATION_SIZE", PROFILE["probation"])
 PDT_EQUITY = 25_000.0
 PDT_BUFFER = _f("PDT_BUFFER", 0.02)          # need 2% above $25k before unlocking, so a dip doesn't trip the rule
 SMALL_ACCOUNT_MAX_POSITIONS = {"day": _i("SMALL_MAX_POSITIONS_DAY", 2), "swing": _i("SMALL_MAX_POSITIONS_SWING", 5),
-                               "long": _i("SMALL_MAX_POSITIONS_LONG", 6)}
+                               "long": _i("SMALL_MAX_POSITIONS_LONG", 6), "crypto": _i("MAX_POSITIONS_CRYPTO", 2)}
 AUTO_REALLOCATE = _b("AUTO_REALLOCATE", True)   # manager moves 5%/week of capital toward the best desk
 REPORT_TIMES_ET = _s("REPORT_TIMES_ET", "00:30,08:30,16:30")
 
@@ -147,6 +147,9 @@ class Desk:
     train_symbols: int      # cap on symbols used for evolution (speed / memory)
     min_trades: int         # fewer simulated trades than this = untrustworthy
     evolve_cooldown_min: int
+    periods_per_year: int = 252   # bars per year, for annualizing results (crypto: hourly, 24/7)
+    bench: str = "SPY"            # the "market" each stock is compared against
+    close_targets: bool = False   # True: a profit target only counts if a bar CLOSES above it (no spike fills)
 
 
 DESKS = {
@@ -177,7 +180,21 @@ DESKS = {
         history_days=_i("LONG_HISTORY_DAYS", 2200), train_symbols=700, min_trades=60,
         evolve_cooldown_min=180,
     ),
+    # Crypto: trades 24/7 on hourly bars, smallest budget, and the strictest bar before it may trade at all.
+    "crypto": Desk(
+        name="crypto", title="Crypto", timeframe="1Hour",
+        sleeve=_f("SLEEVE_CRYPTO", 0.05), sleeve_min=0.0, sleeve_max=0.05,
+        max_positions=_i("MAX_POSITIONS_CRYPTO", 2), risk_per_trade=0.004, daily_loss_pct=0.05,
+        cost_per_side=0.0030, hold_range=(2, 48), stop_range=(1.0, 6.0), target_range=(1.0, 10.0),
+        min_stop=0.012, path_len=48, path_step=1, decision_step=1,
+        history_days=_i("CRYPTO_HISTORY_DAYS", 400), train_symbols=20, min_trades=60,
+        evolve_cooldown_min=60, periods_per_year=24 * 365, bench="BTC/USD", close_targets=True,
+    ),
 }
+# Only coins that trade nearly every hour on Alpaca. Others (DOGE, LTC, LINK, AVAX, ...) go 20-40% of hours
+# with no trades there, so their prices are unreliable for both testing and trading.
+CRYPTO_UNIVERSE = _list("CRYPTO_SYMBOLS", "BTC/USD,ETH/USD,SOL/USD,XRP/USD")
+CRYPTO_ENABLED_DEFAULT = _b("CRYPTO_ENABLED", True)   # the Studio toggle overrides this at runtime
 
 
 def validate():

@@ -41,7 +41,10 @@ def google_news(query: str, limit=8) -> list:
 
 
 def store_web_news(symbol: str, company: str = "") -> int:
-    q = f'"{symbol}" stock' if not company else f'{company} {symbol} stock'
+    if "/" in symbol:
+        q = company or symbol.split("/")[0] + " crypto"
+    else:
+        q = f'"{symbol}" stock' if not company else f'{company} {symbol} stock'
     items = google_news(q)
     rows = [("web" + hashlib.md5((i["headline"] + symbol).encode()).hexdigest()[:16], symbol,
              i["ts"].isoformat(), i["source"], i["headline"], "", i["url"]) for i in items]

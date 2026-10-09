@@ -20,7 +20,7 @@ STATIC = config.ROOT / "studio"
 PORT = config._i("STUDIO_PORT", 8765)
 HOST = config._s("STUDIO_HOST", "127.0.0.1")          # 0.0.0.0 only behind a private network (e.g. Tailscale)
 PASSWORD = config._s("STUDIO_PASSWORD")               # set this whenever the Studio is reachable from the internet
-IDLE_PREFIXES = ("watching", "market closed", "waiting", "sitting out", "no fresh", "brain found no")
+IDLE_PREFIXES = ("crypto desk switched off", "crypto desk is switched off", "watching", "market closed", "waiting", "sitting out", "no fresh", "brain found no")
 
 _cache = {}
 _cache_lock = threading.Lock()
@@ -87,7 +87,7 @@ def state():
         "now_et": now_et().strftime("%a %b %d · %I:%M %p ET"),
         "market": {"open": clock.get("is_open", False),
                    "next_open": str(clock.get("next_open", "")), "next_close": str(clock.get("next_close", ""))},
-        "paper": config.ALPACA_PAPER, "profile": config.RISK_PROFILE,
+        "paper": config.ALPACA_PAPER, "profile": config.RISK_PROFILE, "crypto_enabled": risk.crypto_enabled(),
         "account": {"equity": eq, "cash": acct.get("cash"),
                     "day_change": (eq / acct["last_equity"] - 1) if eq and acct.get("last_equity") else None,
                     "since_start": (eq / start["equity"] - 1) if eq and start.get("equity") else None},
@@ -175,6 +175,11 @@ def dashboard():
 
 # ---------------------------------------------------------------- chat
 DESK_RULES = {
+    "crypto": "Crypto desk rules: trades Bitcoin, Ethereum, Solana and XRP 24/7 on hourly bars with the smallest "
+              "budget in the firm (5% of equity). It only trades when its brain cleared a strict bar on unseen data "
+              "AND the portfolio manager approves AND the Challenger says proceed with at least 70% confidence AND "
+              "research sentiment isn't negative - otherwise it sits out. Each buy gets a protective stop order at "
+              "Alpaca; the bot sells at the target or time limit. The owner can switch it on/off in the Studio.",
     "day": "Day desk rules: trades 9:45am-3:15pm ET on 15-minute bars, every entry is a bracket order (stop-loss + "
            "take-profit at Alpaca), and every position is sold by 3:50pm ET - nothing is held overnight.",
     "swing": "Swing desk rules: decides from daily bars between 9:45am and 3:30pm ET, bracket orders (GTC stop-loss + "
@@ -378,6 +383,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, chat(aid, msg))
             if u.path == "/api/report/new":
                 return self._send(200, new_report())
+            if u.path == "/api/crypto":
+                on = bool(body.get("enabled"))
+                db.kv_set("crypto_enabled", on)
+                db.event("manager", f"Owner switched the crypto desk {'ON' if on else 'OFF'} in the Studio")
+                return self._send(200, {"enabled": on})
             return self._send(404, {"error": "not found"})
         except Exception as e:
             L.warning("POST %s failed: %s", u.path, e)

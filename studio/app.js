@@ -8,8 +8,8 @@
   const dcls = (v) => v == null || Math.abs(v) < 1e-9 ? "" : v > 0 ? "delta-up" : "delta-down";
   const hhmm = (iso) => { try { return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); } catch { return ""; } };
   const dt = (iso) => { try { return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); } catch { return iso || ""; } };
-  const DESK_COLOR = { day: "var(--series-day)", swing: "var(--series-swing)", long: "var(--series-long)" };
-  const DESK_HEX = { day: "#3987e5", swing: "#d95926", long: "#199e70" };
+  const DESK_COLOR = { day: "var(--series-day)", swing: "var(--series-swing)", long: "var(--series-long)", crypto: "#e66767" };
+  const DESK_HEX = { day: "#3987e5", swing: "#d95926", long: "#199e70", crypto: "#e66767" };
   const api = async (path, opts) => { const r = await fetch(path, opts); if (!r.ok) throw new Error(r.status); const ct = r.headers.get("content-type") || ""; return ct.includes("json") ? r.json() : r.text(); };
 
   let STATE = null, view = "studio", chatId = null, dashTimer = null, eqRange = "1M", showTable = false;
@@ -34,6 +34,9 @@
     } catch (e) { $("#market").textContent = "offline"; $("#market").className = "pill closed"; }
   }
   function renderTop(st) {
+    const ct = $("#crypto-toggle");
+    ct.textContent = `₿ Crypto ${st.crypto_enabled ? "ON" : "OFF"}`; ct.className = "pill toggle " + (st.crypto_enabled ? "on" : "off");
+    ct.dataset.on = st.crypto_enabled ? "1" : "";
     $("#paper").style.display = st.paper ? "" : "none";
     $("#paper").textContent = st.paper ? `PAPER · ${String(st.profile || "").toUpperCase()}` : "LIVE";
     $("#market").textContent = st.market.open ? "Market open" : "Market closed";
@@ -189,7 +192,7 @@
 
       ${d.desks.map((x) => {
         const used = x.capital ? Math.min(1, x.invested / x.capital) : 0, b = x.backtest || {};
-        return `<div class="card desk-card span-4"><h3><span class="tag"><i style="background:${DESK_COLOR[x.id]}"></i>${esc(x.title)}</span><span class="status-pill ${x.brain}">${x.brain}</span></h3>
+        return `<div class="card desk-card span-3"><h3><span class="tag"><i style="background:${DESK_COLOR[x.id]}"></i>${esc(x.title)}</span><span class="status-pill ${x.brain}">${x.id === "crypto" && x.brain === "probation" ? "sitting out" : x.brain}</span></h3>
           <div class="muted" style="font-size:12px">Invested ${money(x.invested, 0)} of ${money(x.capital, 0)} (${Math.round(x.sleeve * 100)}% of equity${x.size_mult !== 1 ? `, size ×${x.size_mult}` : ""})</div>
           <div class="bar"><i style="width:${used * 100}%;background:${DESK_COLOR[x.id]}"></i></div>
           <dl><dt>Open positions</dt><dd>${x.positions} / ${x.max_positions}</dd>
@@ -226,14 +229,14 @@
         ${d.lessons.map((l) => `<div class="debate" style="font-size:12.5px"><span class="tag"><i style="background:${DESK_COLOR[l.desk]}"></i>${l.desk}</span> <b>${l.grade}</b> <small class="muted">${dt(l.ts)}</small><div>${esc(l.text)}</div></div>`).join("") || '<div class="empty">Lessons appear after the first trades close.</div>'}</div></div>
       <div class="card span-6"><h3>Are the AI filters helping? <small>avg price move after the decision</small></h3><table>
         <tr><th>Desk</th><th class="r">Bought</th><th class="r">PM vetoed</th><th class="r">Challenger rejected</th></tr>
-        ${["day", "swing", "long"].map((k) => { const x = dec[k] || {}; const f = (r) => r ? `${r.n} · ${r.a == null ? "pending" : pct(r.a)}` : "0"; return `<tr><td><span class="tag"><i style="background:${DESK_COLOR[k]}"></i>${k}</span></td><td class="r">${f(x.buy)}</td><td class="r">${f(x.veto)}</td><td class="r">${f(x.challenged)}</td></tr>`; }).join("")}
+        ${["day", "swing", "long", "crypto"].map((k) => { const x = dec[k] || {}; const f = (r) => r ? `${r.n} · ${r.a == null ? "pending" : pct(r.a)}` : "0"; return `<tr><td><span class="tag"><i style="background:${DESK_COLOR[k]}"></i>${k}</span></td><td class="r">${f(x.buy)}</td><td class="r">${f(x.veto)}</td><td class="r">${f(x.challenged)}</td></tr>`; }).join("")}
       </table><p class="muted" style="font-size:12px">If rejected stocks keep beating bought ones, the manager automatically takes the AI's veto power away.</p></div>`;
 
     document.querySelectorAll("#rng button").forEach((b) => b.addEventListener("click", () => { eqRange = b.dataset.r; document.querySelectorAll("#rng button").forEach((x) => x.classList.toggle("on", x === b)); drawEquity(); }));
     $("#eqtable-t").addEventListener("click", () => { showTable = !showTable; $("#eqtable-t").textContent = (showTable ? "Hide" : "Show") + " data table"; drawEquity(); });
     drawEquity();
     const evo = d.evolution;
-    lineChart($("#evochart"), ["day", "swing", "long"].map((k) => ({
+    lineChart($("#evochart"), ["day", "swing", "long", "crypto"].map((k) => ({
       name: k[0].toUpperCase() + k.slice(1), short: k, color: DESK_HEX[k],
       values: evo.map((e) => e.desk === k ? { t: e.ts, v: e.best_holdout, filled: !!e.promoted, extra: e.promoted ? "promoted" : "kept champion" } : { t: e.ts, v: null }),
     })).filter((s) => s.values.some((p) => p.v != null)), { height: 220, fmtY: (v) => v.toFixed(1), fmtX: (t, long) => long ? dt(t) : new Date(t).toLocaleDateString([], { month: "short", day: "numeric" }), markers: true });
@@ -297,6 +300,13 @@
   });
 
   document.querySelectorAll(".roster .card-h, .feed .card-h").forEach((h) => h.addEventListener("click", () => h.parentElement.classList.toggle("collapsed")));
+
+  $("#crypto-toggle").addEventListener("click", async () => {
+    const turnOn = !$("#crypto-toggle").dataset.on;
+    if (!turnOn && !confirm("Switch the crypto desk OFF? It stops opening new crypto trades (any open ones are still managed until they close).")) return;
+    try { await api("/api/crypto", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: turnOn }) }); } catch {}
+    poll();
+  });
 
   // ------------------------------------------------------------------ boot
   World.init($("#world"), { onBot: openChat, onBoard: () => setView("dashboard"), onShelf: () => setView("reports") }).then(() => {

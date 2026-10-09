@@ -8,11 +8,18 @@ from .timeutil import now_et
 
 
 def sleeves() -> dict:
-    s = db.kv_get("sleeves")
-    if not s:
-        s = {k: d.sleeve for k, d in config.DESKS.items()}
+    s = db.kv_get("sleeves") or {}
+    missing = {k: d.sleeve for k, d in config.DESKS.items() if k not in s}
+    if missing:                      # e.g. a desk added later (crypto) gets its default share
+        s.update(missing)
         db.kv_set("sleeves", s)
     return s
+
+
+def crypto_enabled() -> bool:
+    """The on/off switch in the Studio."""
+    v = db.kv_get("crypto_enabled")
+    return config.CRYPTO_ENABLED_DEFAULT if v is None else bool(v)
 
 
 def size_mult(desk) -> float:
@@ -90,6 +97,11 @@ def can_buy(desk_name, account: dict, alp_positions: dict) -> tuple:
 
 
 def position_qty(desk_name, account, alp_positions, price, stop_pct, conviction) -> int:
+    n = position_notional(desk_name, account, alp_positions, price, stop_pct, conviction)
+    return int(math.floor(n / price)) if n > 0 and price > 0 else 0
+
+
+def position_notional(desk_name, account, alp_positions, price, stop_pct, conviction) -> float:
     """Whole shares to buy. Conviction scales the base slot size; the risk profile scales everything."""
     desk = config.DESKS[desk_name]
     eq = account["equity"]
@@ -100,7 +112,4 @@ def position_qty(desk_name, account, alp_positions, price, stop_pct, conviction)
     room = sleeve_cap - desk_exposure(desk_name, prices)
     cash = account["cash"] - pending_buys_notional() - config.CASH_RESERVE_PCT * eq   # never use margin
     risk_cap = desk.risk_per_trade * prof["risk"] * eq / max(stop_pct, 1e-4)
-    notional = min(slot, room, cash, risk_cap)
-    if notional <= 0 or price <= 0:
-        return 0
-    return int(math.floor(notional / price))
+    return max(0.0, min(slot, room, cash, risk_cap))

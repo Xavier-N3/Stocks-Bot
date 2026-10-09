@@ -27,6 +27,13 @@ def status(champ) -> str:
         return "untrained"
     h = champ.get("holdout", {})
     desk = config.DESKS[champ["id"].split("-")[0]]
+    if desk.name == "crypto":
+        # The strictest bar in the firm: crypto only trades with a brain that clearly won on unseen data
+        # AND in training - otherwise it sits out entirely (no probation trading).
+        t = champ.get("train", {})
+        strong = (h.get("trades", 0) >= 30 and h.get("sharpe", 0) >= 1.5 and h.get("winrate", 0) >= 0.55
+                  and h.get("total", 0) > 0 and h.get("maxdd", 1) <= 0.15 and t.get("sharpe", 0) >= 1.0)
+        return "active" if strong else "probation"
     enough = h.get("trades", 0) >= max(30, desk.min_trades * 0.35)
     if (champ["holdout_fit"] or 0) >= 0.5 and h.get("total", 0) > 0 and enough:
         return "active"

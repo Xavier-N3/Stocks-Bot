@@ -13,7 +13,7 @@ def main():
     print(f"\nAccount ({'PAPER' if config.ALPACA_PAPER else 'LIVE'}): equity ${a['equity']:,.2f}  cash ${a['cash']:,.2f}  {chg}")
     print("\nAgents:")
     for name in ["day_researcher", "day_trader", "swing_researcher", "swing_trader", "long_researcher",
-                 "long_trader", "challenger", "manager", "lab"]:
+                 "long_trader", "crypto_researcher", "crypto_trader", "challenger", "manager", "lab"]:
         hb = db.kv_get(f"heartbeat:{name}") or {}
         age = ""
         if hb.get("at"):

@@ -13,7 +13,7 @@ from ..marketdata import MarketData
 from ..timeutil import ET, hhmm, now_et
 from .base import Agent
 
-FOLLOWUP_HOURS = {"day": 6, "swing": 24 * 7, "long": 24 * 30}
+FOLLOWUP_HOURS = {"day": 6, "swing": 24 * 7, "long": 24 * 30, "crypto": 24}
 
 
 def grade(r_mult):
@@ -71,14 +71,15 @@ class Manager(Agent):
     def _review_closed(self):
         for p in db.query("SELECT * FROM positions WHERE status='closed' AND reviewed=0 ORDER BY exit_time LIMIT 10"):
             desk = config.DESKS[p["desk"]]
-            tf = "15Min" if p["desk"] == "day" else "1Day"
+            tf = {"day": "15Min", "crypto": "1Hour"}.get(p["desk"], "1Day")
             entry_t = datetime.fromisoformat(p["entry_time"])
             exit_t = datetime.fromisoformat(p["exit_time"])
-            bars = db.query("SELECT symbol, h, l, o, c FROM bars WHERE tf=? AND symbol IN (?, 'SPY') AND ts >= ? AND ts <= ? "
-                            "ORDER BY ts", (tf, p["symbol"], (entry_t - timedelta(days=1 if tf == '1Day' else 0)).isoformat(),
+            bench = config.DESKS[p["desk"]].bench
+            bars = db.query("SELECT symbol, h, l, o, c FROM bars WHERE tf=? AND symbol IN (?, ?) AND ts >= ? AND ts <= ? "
+                            "ORDER BY ts", (tf, p["symbol"], bench, (entry_t - timedelta(days=1 if tf == '1Day' else 0)).isoformat(),
                                             exit_t.isoformat()))
             mine = [b for b in bars if b["symbol"] == p["symbol"]]
-            spy = [b for b in bars if b["symbol"] == "SPY"]
+            spy = [b for b in bars if b["symbol"] == bench]
             ep = p["entry_price"] or 0
             mfe = max(b["h"] for b in mine) / ep - 1 if mine and ep else None
             mae = min(b["l"] for b in mine) / ep - 1 if mine and ep else None

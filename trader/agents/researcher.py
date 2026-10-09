@@ -6,18 +6,21 @@ import json
 import time
 from datetime import datetime, timedelta, timezone
 
-from .. import brain, config, db, features, library, llm, universe, web
+from .. import brain, config, db, features, library, llm, risk, universe, web
 from ..broker import Broker
 from ..marketdata import MarketData
 from ..timeutil import ET, et_minutes, now_et
 from .base import Agent
 
 HORIZON = {"day": "the rest of today's trading session", "swing": "the next 1-4 weeks",
-           "long": "the next 6-12 months"}
-TOP_N = {"day": 12, "swing": 15, "long": 25}
-BRIEF_TTL_MIN = {"day": 45, "swing": 20 * 60, "long": 7 * 24 * 60}
-REANALYZE_S = {"day": 3600, "swing": 6 * 3600, "long": 24 * 3600}
-NEWS_HOURS = {"day": 20, "swing": 72, "long": 168}
+           "long": "the next 6-12 months", "crypto": "the next 1-48 hours"}
+TOP_N = {"day": 12, "swing": 15, "long": 25, "crypto": 13}
+BRIEF_TTL_MIN = {"day": 45, "swing": 20 * 60, "long": 7 * 24 * 60, "crypto": 120}
+REANALYZE_S = {"day": 3600, "swing": 6 * 3600, "long": 24 * 3600, "crypto": 3 * 3600}
+NEWS_HOURS = {"day": 20, "swing": 72, "long": 168, "crypto": 24}
+COIN_NAMES = {"BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana", "XRP": "XRP Ripple", "DOGE": "Dogecoin",
+              "LTC": "Litecoin", "LINK": "Chainlink", "AVAX": "Avalanche", "ADA": "Cardano", "DOT": "Polkadot",
+              "BCH": "Bitcoin Cash", "UNI": "Uniswap", "AAVE": "Aave"}
 
 
 def daily_is_stale() -> bool:
@@ -69,11 +72,27 @@ class Researcher(Agent):
         return self._wait
 
     def step(self):
+        if self.desk.name == "crypto":
+            return self._crypto()
         clock = self.broker.clock()
         if self.desk.name == "day":
             self._day(clock)
         else:
             self._daily(clock)
+
+    # ------------------------------------------------------------ crypto desk (24/7)
+    def _crypto(self):
+        if not risk.crypto_enabled():
+            self._wait = 120
+            self.activity("Crypto desk is switched off (turn it on in the Studio)")
+            return
+        self._wait = 600
+        uni = config.CRYPTO_UNIVERSE
+        self.activity(f"Updating hourly prices for {len(uni)} coins")
+        self.md.update_crypto(uni)
+        market_context(90, self.name)
+        fdf = features.live_features(self.desk, uni)
+        self._research(self._rank(fdf), True)
 
     # ------------------------------------------------------------ day desk
     def _day_universe(self):
@@ -159,6 +178,7 @@ class Researcher(Agent):
         for sym, r in scored.head(TOP_N[self.desk.name]).iterrows():
             nums = {"price": round(float(r["c"]), 2)}
             keys = (["day_ret", "gap", "d_vwap", "vratio", "rsi"] if self.desk.name == "day"
+                    else ["r1", "r5", "r20", "r60", "d_sma200", "rsi", "atr", "rs60"] if self.desk.name == "crypto"
                     else ["r5", "r20", "r60", "mom12_1", "d_sma200", "d_hi252", "rsi", "atr"])
             for k in keys:
                 v = r.get(k)
@@ -174,10 +194,14 @@ class Researcher(Agent):
         syms = [s for s, _, _ in ranked]
         self.activity(f"Reading news on {', '.join(syms[:6])}{'...' if len(syms) > 6 else ''}")
         self.md.fetch_news(syms, NEWS_HOURS[d])
-        web_every = 1800 if d == "day" else 6 * 3600
+        web_every = 1800 if d in ("day", "crypto") else 6 * 3600
         for s in syms[:8]:
             if time.time() - self.last_web.get(s, 0) > web_every:
-                web.store_web_news(s, universe.info(s).get("name", ""))
+                if "/" in s:     # crypto: search the coin's name, not "BTC/USD stock"
+                    coin = COIN_NAMES.get(s.split("/")[0], s.split("/")[0])
+                    web.store_web_news(s, f"{coin} crypto price")
+                else:
+                    web.store_web_news(s, universe.info(s).get("name", ""))
                 self.last_web[s] = time.time()
         since = (datetime.now(timezone.utc) - timedelta(hours=NEWS_HOURS[d])).isoformat()
         todo, packs = [], {}
