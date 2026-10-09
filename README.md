@@ -88,6 +88,17 @@ inside the same background process as the bots.
 The PC must be on (and not asleep) for it to run 24/7. It keeps Windows from idle-sleeping while it runs, but
 closing the laptop lid can still sleep it. Set *Settings > System > Power > Lid close = Do nothing* if needed.
 
+## Risk profile (`RISK_PROFILE` in `.env`)
+
+`conservative`, `balanced` or `aggressive` (this account uses **aggressive**: about 2x the risk per trade,
+bigger positions, buying stops for the day at -6%). Every position size is a % of *current* equity, so gains
+compound automatically: as the account grows, positions grow with it. Under $25k equity the day desk is limited to
+3 day trades per 5 days (US pattern-day-trader rule), so it is capped at 2 positions on this account.
+
+## Running 24/7 in the cloud
+
+See [deploy/CLOUD.md](deploy/CLOUD.md): Oracle Cloud Always Free server + GitHub + Tailscale or Cloudflare Tunnel.
+
 ## Free AI setup (add keys to `.env`)
 
 All of these are free; the system tries them in order and skips any that are out of quota, so it never stops:
