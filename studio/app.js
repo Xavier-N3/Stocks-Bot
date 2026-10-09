@@ -199,7 +199,8 @@
           <dt>Closed trades · win rate</dt><dd>${x.trades} · ${x.trades ? Math.round(100 * x.wins / x.trades) + "%" : "—"}</dd>
           <dt>Realized P&amp;L</dt><dd>${money(x.realized)}</dd><dt>Unrealized P&amp;L</dt><dd>${money(x.unrealized)}</dd>
           <dt>Backtest on unseen data</dt><dd>${b.trades ? `${pct(b.total, 1)} · ${b.trades} trades · ${Math.round(100 * (b.winrate || 0))}% wins` : "—"}</dd>
-          <dt>AI veto · Challenger</dt><dd>${esc(x.llm_mode)} · ${esc(x.challenger_mode)}</dd></dl></div>`;
+          <dt>AI veto · Challenger</dt><dd>${esc(x.llm_mode)} · ${esc(x.challenger_mode)}</dd></dl>
+          ${x.id === "crypto" && d.crypto_stage ? `<div class="muted" style="font-size:12px;margin-top:8px;line-height:1.4"><b style="color:var(--text-secondary)">Stage:</b> ${esc(d.crypto_stage.label)}</div>` : ""}</div>`;
       }).join("")}
 
       <div class="card span-7"><h3>Open positions <small>${d.positions.length} held</small></h3><div class="scroll"><table>

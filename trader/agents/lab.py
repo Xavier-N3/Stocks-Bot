@@ -45,6 +45,8 @@ class Lab(Agent):
         if not last:
             return True
         age = datetime.now(timezone.utc) - datetime.fromisoformat(last)
+        if name == "crypto" and brain.status(brain.champion("crypto")) != "active":
+            return age >= timedelta(minutes=60)          # keep training hourly until crypto is good enough
         req = db.kv_get(f"evolve_request:{name}")
         if req and req > last and age >= timedelta(minutes=config.DESKS[name].evolve_cooldown_min):
             return True
@@ -97,7 +99,7 @@ class Lab(Agent):
         first = champ is None
         market_open = self.broker.clock()["is_open"]
         budget = 300 if first else (45 if name == "day" and market_open else 150)
-        gens = 40 if first else 15
+        gens = 40 if first else (25 if name == "crypto" else 15)
         pop = db.kv_get(f"population:{name}")
         self.activity(f"Breeding 32 {name} brains for up to {gens} generations on {len(ds['X']):,} historical setups")
         t0 = time.time()
@@ -107,7 +109,13 @@ class Lab(Agent):
         champ_h = None
         if champ is not None and len(champ["vec"]) == evolution.n_genes(len(ds["feats"])):
             champ_h = evolution.simulate(champ["vec"], ds, desk, "holdout")
-        promote = champ_h is None or (best["holdout"]["fitness"] > champ_h["fitness"] + 0.05
+        margin = 0.05
+        if name == "crypto" and champ is not None:
+            # don't churn: a brain in (or past) its shadow test is only replaced by a clearly better one
+            from .. import crypto_shadow
+            st = crypto_shadow.stage(champ)
+            margin = 0.5 if st["stage"] in ("shadow", "cleared") and st["shadow"]["trades"] >= 3 else 0.25
+        promote = champ_h is None or (best["holdout"]["fitness"] > champ_h["fitness"] + margin
                                       and best["holdout"]["trades"] >= 5)
         note = ""
         if promote:

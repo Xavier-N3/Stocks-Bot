@@ -164,8 +164,11 @@ def dashboard():
         x["pros"], x["cons"] = json.loads(x["pros"] or "[]"), json.loads(x["cons"] or "[]")
     evo = db.query("SELECT ts, desk, generations, best_train, best_holdout, champion_holdout, promoted, note "
                    "FROM evolution_log ORDER BY id")
+    from . import crypto_shadow
+    crypto_stage = crypto_shadow.stage(brain.champion("crypto"))
     spy_now = (db.one("SELECT spy FROM equity WHERE spy IS NOT NULL ORDER BY ts DESC LIMIT 1") or {}).get("spy")
-    return {"account": acct, "start": db.kv_get("start") or {}, "spy_now": spy_now, "desks": desks, "positions": positions,
+    return {"account": acct, "start": db.kv_get("start") or {}, "spy_now": spy_now, "desks": desks,
+            "crypto_stage": crypto_stage, "positions": positions,
             "trades": trades, "decisions": decisions, "debates": debates, "evolution": evo,
             "llm": llm.usage_summary(1), "llm_available": {t: llm.available(t) for t in ("smart", "fast")},
             "challenger": db.kv_get("challenger_scorecard") or {},
@@ -215,6 +218,9 @@ def _context(aid):
         n = db.one("SELECT COUNT(*) n, SUM(pnl>0) w, SUM(pnl) p FROM positions WHERE desk=? AND status='closed' "
                    "AND genome_id != 'legacy'", (dk,))
         lines.append(DESK_RULES[dk])
+        if dk == "crypto":
+            from . import crypto_shadow
+            lines.append("Crypto training stage right now: " + crypto_shadow.stage(brain.champion("crypto"))["label"])
         lines.append(f"[{dk} desk] brain status {brain.status(champ)}; capital share {risk.sleeves()[dk]:.0%}; "
                      f"live closed trades {n['n']} ({n['w'] or 0} wins, P&L ${n['p'] or 0:,.2f}); backtest on unseen "
                      f"data: {h.get('trades', 0)} trades, {100 * h.get('total', 0):+.1f}%, win rate "

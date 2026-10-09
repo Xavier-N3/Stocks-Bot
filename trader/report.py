@@ -81,6 +81,10 @@ def build(broker, since_iso=None) -> str:
           "_Brain: **active** = proved an edge on data it never trained on; **probation** = no proven edge yet, "
           f"trading at {config.PROBATION_SIZE:.0%} size; **untrained** = first evolution still running._", ""]
 
+    from . import crypto_shadow
+    L += [f"**Crypto desk:** {'ON' if risk.crypto_enabled() else 'OFF'} - "
+          f"{crypto_shadow.stage(brain.champion('crypto'))['label']}", ""]
+
     # ---- closed trades
     closed = db.query("SELECT * FROM positions WHERE status='closed' AND exit_time>=? ORDER BY exit_time", (since_iso,))
     rows = []

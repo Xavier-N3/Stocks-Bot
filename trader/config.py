@@ -187,7 +187,7 @@ DESKS = {
         max_positions=_i("MAX_POSITIONS_CRYPTO", 2), risk_per_trade=0.004, daily_loss_pct=0.05,
         cost_per_side=0.0030, hold_range=(2, 48), stop_range=(1.0, 6.0), target_range=(1.0, 10.0),
         min_stop=0.012, path_len=48, path_step=1, decision_step=1,
-        history_days=_i("CRYPTO_HISTORY_DAYS", 400), train_symbols=20, min_trades=60,
+        history_days=_i("CRYPTO_HISTORY_DAYS", 1000), train_symbols=20, min_trades=60,
         evolve_cooldown_min=60, periods_per_year=24 * 365, bench="BTC/USD", close_targets=True,
     ),
 }

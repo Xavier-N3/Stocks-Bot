@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT
 CREATE TABLE IF NOT EXISTS debates (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, desk TEXT, symbol TEXT,
     price REAL, pros TEXT, cons TEXT, verdict TEXT, confidence REAL, reasoning TEXT, mode TEXT, model TEXT,
     later_ret REAL);
+CREATE TABLE IF NOT EXISTS shadow_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, genome_id TEXT, symbol TEXT,
+    entry_ts TEXT, entry_price REAL, stop_pct REAL, target_pct REAL, deadline TEXT, exit_ts TEXT, exit_price REAL,
+    ret REAL, exit_reason TEXT, status TEXT);
 CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT, ts TEXT, role TEXT, text TEXT);
 CREATE TABLE IF NOT EXISTS equity (ts TEXT PRIMARY KEY, equity REAL, cash REAL, spy REAL);
 """

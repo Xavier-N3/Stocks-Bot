@@ -9,6 +9,7 @@ import numpy as np
 
 from .. import brain, config, db, features, llm, risk
 from . import challenger
+from .. import crypto_shadow
 from ..broker import Broker
 from ..marketdata import MarketData
 from ..timeutil import ET, et_minutes, now_et
@@ -90,11 +91,27 @@ class Trader(Agent):
             self.activity(f"Crypto desk switched off - no new trades ({n_open} position(s) still managed)")
             return
         last = db.kv_get("last_decide:crypto", 0)
-        if datetime.now(timezone.utc).timestamp() - last >= DECIDE_EVERY_S["crypto"]:
-            self._decide()
-            db.kv_set("last_decide:crypto", datetime.now(timezone.utc).timestamp())
-        else:
+        if datetime.now(timezone.utc).timestamp() - last < DECIDE_EVERY_S["crypto"]:
             self.activity(f"Watching {n_open} crypto position(s), 24/7")
+            return
+        db.kv_set("last_decide:crypto", datetime.now(timezone.utc).timestamp())
+        champ = brain.champion("crypto")
+        stg = crypto_shadow.stage(champ)
+        if stg["stage"] == "training":
+            self.activity("Sitting out while Darwin trains a crypto brain good enough to test")
+            return
+        # forward "exam" on live prices: paper trades only, no orders
+        self.md.update_crypto(config.CRYPTO_UNIVERSE)
+        fdf = features.live_features(self.desk, config.CRYPTO_UNIVERSE)
+        scored = brain.score_live("crypto", champ, fdf) if not fdf.empty else None
+        prices = {s: v["price"] for s, v in self.md.snapshots(config.CRYPTO_UNIVERSE).items()}
+        crypto_shadow.run(champ, scored, prices, self.desk.max_positions)
+        crypto_shadow.check_revoke(champ)
+        stg = crypto_shadow.stage(champ)
+        if stg["stage"] != "cleared":
+            self.activity(stg["label"])
+            return
+        self._decide()
 
     # ------------------------------------------------------------ exits
     def _enforce_deadlines(self):
@@ -226,6 +243,8 @@ class Trader(Agent):
             for i in range(0, len(through), 6):
                 debates.update(challenger.review(d, through[i:i + 6], self.name))
         mult = config.PROBATION_SIZE if st == "probation" else 1.0
+        if d == "crypto" and crypto_shadow.stage(champ).get("half_size"):
+            mult = 0.5
         for p in picks:
             v = verdicts.get(p["symbol"], {})
             deb = debates.get(p["symbol"], {})
