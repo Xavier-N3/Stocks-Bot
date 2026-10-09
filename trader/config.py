@@ -120,6 +120,7 @@ PDT_EQUITY = 25_000.0
 PDT_BUFFER = _f("PDT_BUFFER", 0.02)          # need 2% above $25k before unlocking, so a dip doesn't trip the rule
 SMALL_ACCOUNT_MAX_POSITIONS = {"day": _i("SMALL_MAX_POSITIONS_DAY", 2), "swing": _i("SMALL_MAX_POSITIONS_SWING", 5),
                                "long": _i("SMALL_MAX_POSITIONS_LONG", 6)}
+AUTO_REALLOCATE = _b("AUTO_REALLOCATE", True)   # manager moves 5%/week of capital toward the best desk
 REPORT_TIMES_ET = _s("REPORT_TIMES_ET", "00:30,08:30,16:30")
 
 
@@ -151,7 +152,7 @@ class Desk:
 DESKS = {
     "day": Desk(
         name="day", title="Day trading", timeframe="15Min",
-        sleeve=_f("SLEEVE_DAY", 0.20), sleeve_min=0.10, sleeve_max=0.30,
+        sleeve=_f("SLEEVE_DAY", 0.20), sleeve_min=0.10, sleeve_max=0.40,
         max_positions=_i("MAX_POSITIONS_DAY", 5), risk_per_trade=0.005, daily_loss_pct=0.04,
         cost_per_side=0.0005, hold_range=(2, 26), stop_range=(0.5, 4.0), target_range=(0.5, 8.0),
         min_stop=0.004, path_len=26, path_step=1, decision_step=1,

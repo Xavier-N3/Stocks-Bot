@@ -191,6 +191,8 @@ class Manager(Agent):
     def _weekly_sleeves(self):
         """Once a week, move 5% of capital from the weakest desk to the strongest
         (only with enough live trades to judge, and within each desk's limits)."""
+        if not config.AUTO_REALLOCATE:
+            return
         week = now_et().strftime("%G-W%V")
         if now_et().weekday() != 6 or db.kv_get("sleeves_week") == week:
             return
