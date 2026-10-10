@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS genomes (id TEXT PRIMARY KEY, desk TEXT, created TEXT
 CREATE TABLE IF NOT EXISTS evolution_log (id INTEGER PRIMARY KEY AUTOINCREMENT, desk TEXT,
     ts TEXT, generations INTEGER, best_train REAL, best_holdout REAL, champion_holdout REAL,
     promoted INTEGER, note TEXT);
+CREATE INDEX IF NOT EXISTS evolution_ts ON evolution_log (ts);
 CREATE TABLE IF NOT EXISTS llm_usage (day TEXT, provider TEXT, model TEXT, requests INTEGER,
     tokens INTEGER, errors INTEGER, PRIMARY KEY (day, provider, model));
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT, updated TEXT);

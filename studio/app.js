@@ -12,7 +12,7 @@
   const DESK_HEX = { day: "#3987e5", swing: "#d95926", long: "#199e70", crypto: "#e66767" };
   const api = async (path, opts) => { const r = await fetch(path, opts); if (!r.ok) throw new Error(r.status); const ct = r.headers.get("content-type") || ""; return ct.includes("json") ? r.json() : r.text(); };
 
-  let STATE = null, view = "studio", chatId = null, dashTimer = null, eqRange = "1M", showTable = false;
+  let STATE = null, view = "studio", chatId = null, dashTimer = null, eqRange = "1M", showTable = false, evoSpan = "1D", evoEnd = null;
 
   // ------------------------------------------------------------------ tabs
   function setView(v) {
@@ -66,7 +66,7 @@
     if (!h) { tip.style.display = "none"; return; }
     if (h.dog) {
       const n = h.dog.pets;
-      tip.innerHTML = `<b>🐶 ${esc(h.dog.name)}</b><small>The studio dog</small><p>${h.dog.asleep ? "💤 Napping (petting is still welcome)" : "🐾 Good dog"}</p>` +
+      tip.innerHTML = `<b>🐶 ${esc(h.dog.name)}</b><small>The studio goldendoodle</small><p>${h.dog.asleep ? "💤 Napping (petting is still welcome)" : "🐾 Good girl"}</p>` +
         `<small>Click to pet${n ? ` · petted ${n} time${n === 1 ? "" : "s"}` : ""}</small>`;
     } else {
       const a = STATE?.agents.find((x) => x.id === h.bot.id); if (!a) return;
@@ -229,12 +229,14 @@
         ${d.trades.map((t) => `<tr title="${esc(t.lesson || "")}"><td><span class="tag"><i style="background:${DESK_COLOR[t.desk]}"></i>${t.desk}</span></td><td><b>${esc(t.symbol)}</b></td><td>${dt(t.exit_time)}</td>
           <td class="r"><span class="${dcls(t.pnl_pct)}">${pct(t.pnl_pct)}</span></td><td class="r">${money(t.pnl)}</td><td>${t.grade || "…"}</td><td>${esc(t.exit_reason || "")}</td></tr>`).join("") || '<tr><td colspan=7 class="empty">No closed trades yet</td></tr>'}
       </table></div></div>
-      <div class="card span-5"><h3>Neuroevolution <small>best score on unseen data, per training run</small></h3><div id="evochart"></div>
-        <p class="muted" style="font-size:12px;margin:6px 0 0">Filled dot = a new champion brain was promoted. Higher = better risk-adjusted results on data the brains never trained on.</p></div>
-
-      <div class="card span-6"><h3>Lessons the bots learned</h3><div class="scroll">
+      <div class="card span-5"><h3>Lessons the bots learned</h3><div class="scroll">
         ${d.lessons.map((l) => `<div class="debate" style="font-size:12.5px"><span class="tag"><i style="background:${DESK_COLOR[l.desk]}"></i>${l.desk}</span> <b>${l.grade}</b> <small class="muted">${dt(l.ts)}</small><div>${esc(l.text)}</div></div>`).join("") || '<div class="empty">Lessons appear after the first trades close.</div>'}</div></div>
-      <div class="card span-6"><h3>Are the AI filters helping? <small>avg price move after the decision</small></h3><table>
+      <div class="card span-8"><h3>Neuroevolution <small>best score on unseen data, per time slot</small>
+        <span class="seg" id="evo-span">${Object.keys(EVO_LEN).map((r) => `<button class="${r === evoSpan ? "on" : ""}" data-r="${r}">${r}</button>`).join("")}</span></h3>
+        <div class="evo-nav"><button class="btn sm" id="evo-old">◀ Older</button><span id="evo-range" class="muted"></span><button class="btn sm" id="evo-new">Newer ▶</button><button class="btn sm" id="evo-latest">Latest</button></div>
+        <div id="evochart"></div>
+        <p class="muted" style="font-size:12px;margin:6px 0 0">Each dot = the best brain score a desk reached in that time slot (big filled dot = a new champion was promoted). Higher = better risk-adjusted results on data the brains never trained on. Drag the chart sideways or use ◀ Older to look back.</p></div>
+      <div class="card span-4"><h3>Are the AI filters helping? <small>avg price move after the decision</small></h3><table>
         <tr><th>Desk</th><th class="r">Bought</th><th class="r">PM vetoed</th><th class="r">Challenger rejected</th></tr>
         ${["day", "swing", "long", "crypto"].map((k) => { const x = dec[k] || {}; const f = (r) => r ? `${r.n} · ${r.a == null ? "pending" : pct(r.a)}` : "0"; return `<tr><td><span class="tag"><i style="background:${DESK_COLOR[k]}"></i>${k}</span></td><td class="r">${f(x.buy)}</td><td class="r">${f(x.veto)}</td><td class="r">${f(x.challenged)}</td></tr>`; }).join("")}
       </table><p class="muted" style="font-size:12px">If rejected stocks keep beating bought ones, the manager automatically takes the AI's veto power away.</p></div>`;
@@ -242,11 +244,81 @@
     document.querySelectorAll("#rng button").forEach((b) => b.addEventListener("click", () => { eqRange = b.dataset.r; document.querySelectorAll("#rng button").forEach((x) => x.classList.toggle("on", x === b)); drawEquity(); }));
     $("#eqtable-t").addEventListener("click", () => { showTable = !showTable; $("#eqtable-t").textContent = (showTable ? "Hide" : "Show") + " data table"; drawEquity(); });
     drawEquity();
-    const evo = d.evolution;
-    lineChart($("#evochart"), ["day", "swing", "long", "crypto"].map((k) => ({
-      name: k[0].toUpperCase() + k.slice(1), short: k, color: DESK_HEX[k],
-      values: evo.map((e) => e.desk === k ? { t: e.ts, v: e.best_holdout, filled: !!e.promoted, extra: e.promoted ? "promoted" : "kept champion" } : { t: e.ts, v: null }),
-    })).filter((s) => s.values.some((p) => p.v != null)), { height: 220, fmtY: (v) => v.toFixed(1), fmtX: (t, long) => long ? dt(t) : new Date(t).toLocaleDateString([], { month: "short", day: "numeric" }), markers: true });
+    document.querySelectorAll("#evo-span button").forEach((b) => b.addEventListener("click", () => { evoSpan = b.dataset.r; evoEnd = null; document.querySelectorAll("#evo-span button").forEach((x) => x.classList.toggle("on", x === b)); drawEvo(); }));
+    $("#evo-old").addEventListener("click", () => shiftEvo(-EVO_LEN[evoSpan] * .75));
+    $("#evo-new").addEventListener("click", () => shiftEvo(EVO_LEN[evoSpan] * .75));
+    $("#evo-latest").addEventListener("click", () => { evoEnd = null; drawEvo(); });
+    drawEvo();
+  }
+  // ------------------------------------------------------------------ neuroevolution chart (time-based, scrollable)
+  const EVO_LEN = { "6H": 6 * 3600e3, "1D": 864e5, "1W": 7 * 864e5, "1M": 30 * 864e5 };
+  async function drawEvo() {
+    const holder = $("#evochart"); if (!holder) return;
+    let d;
+    try { d = await api(`/api/evolution?span=${evoSpan}${evoEnd ? "&end=" + encodeURIComponent(evoEnd) : ""}`); } catch { holder.innerHTML = '<div class="empty">Chart unavailable</div>'; return; }
+    if (!d || !$("#evochart")) return;
+    const t0 = Date.parse(d.start), t1 = Date.parse(d.end), long = evoSpan === "1W" || evoSpan === "1M";
+    const fmtT = (t) => new Date(t).toLocaleString([], evoSpan === "1M" ? { month: "short", day: "numeric" } : long ? { weekday: "short", hour: "numeric" } : { hour: "numeric", minute: "2-digit" });
+    const fmtFull = (t) => new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    $("#evo-range").textContent = `${fmtFull(t0)} – ${d.has_newer ? fmtFull(t1) : "now"}`;
+    $("#evo-old").disabled = !d.has_older; $("#evo-new").disabled = !d.has_newer; $("#evo-latest").disabled = !d.has_newer;
+    const desks = ["day", "swing", "long", "crypto"].filter((k) => d.points.some((p) => p.desk === k));
+    holder.innerHTML = `<div class="legend">${desks.map((k) => `<span><i style="background:${DESK_HEX[k]}"></i>${k[0].toUpperCase() + k.slice(1)}</span>`).join("")}</div>
+      <div class="chart"><canvas style="cursor:grab"></canvas><div class="tip"></div></div>`;
+    const cv = $("canvas", holder), tip = $(".tip", holder), dpr = Math.min(2, devicePixelRatio || 1);
+    const W = holder.clientWidth, H = 250, padL = 44, padR = 14, padT = 10, padB = 26, pw = W - padL - padR;
+    cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + "px";
+    const c = cv.getContext("2d"); c.scale(dpr, dpr);
+    const pts = d.points.map((p) => ({ ...p, ms: Date.parse(p.t) }));
+    const vals = pts.map((p) => p.v);
+    let lo = Math.min(0, ...vals), hi = Math.max(0.5, ...vals); const pad = (hi - lo) * .08; lo -= pad; hi += pad;
+    const X = (t) => padL + (t - t0) / (t1 - t0) * pw, Y = (v) => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
+    c.font = "11px Nunito"; c.textBaseline = "middle";
+    for (let k = 0; k <= 4; k++) {
+      const v = lo + (hi - lo) * k / 4, y = Y(v);
+      c.strokeStyle = "rgba(255,255,255,.06)"; c.lineWidth = 1; c.beginPath(); c.moveTo(padL, y); c.lineTo(W - padR, y); c.stroke();
+      c.fillStyle = "#9a8a78"; c.textAlign = "right"; c.fillText(v.toFixed(1), padL - 8, y);
+    }
+    if (lo < 0 && hi > 0) { c.strokeStyle = "rgba(255,255,255,.18)"; c.beginPath(); c.moveTo(padL, Y(0)); c.lineTo(W - padR, Y(0)); c.stroke(); }
+    c.textAlign = "center"; c.fillStyle = "#9a8a78";
+    for (let k = 0; k <= 4; k++) { const t = t0 + (t1 - t0) * k / 4; c.fillText(fmtT(t), Math.max(padL + 24, Math.min(W - padR - 24, X(t))), H - 10); }
+    if (!pts.length) { c.fillStyle = "#9a8a78"; c.font = "13px Nunito"; c.fillText("No training runs in this window", padL + pw / 2, H / 2); }
+    for (const k of desks) {
+      const s = pts.filter((p) => p.desk === k); c.strokeStyle = DESK_HEX[k]; c.lineWidth = 2; c.lineJoin = "round"; c.beginPath();
+      s.forEach((p, i) => (i ? c.lineTo(X(p.ms), Y(p.v)) : c.moveTo(X(p.ms), Y(p.v)))); c.stroke();
+      for (const p of s) { c.beginPath(); c.arc(X(p.ms), Y(p.v), p.promoted ? 4.5 : 3, 0, 7); c.fillStyle = p.promoted ? DESK_HEX[k] : "#2b2420"; c.fill(); c.strokeStyle = DESK_HEX[k]; c.lineWidth = 1.5; c.stroke(); }
+    }
+    const base = c.getImageData(0, 0, cv.width, cv.height);
+    // drag sideways to scroll through time (the chart slides while dragging, then loads the new window)
+    let drag = null;
+    cv.addEventListener("pointerdown", (e) => { drag = { x: e.clientX }; cv.setPointerCapture(e.pointerId); cv.style.cursor = "grabbing"; tip.style.display = "none"; });
+    cv.addEventListener("pointerup", (e) => {
+      if (!drag) return; const dx = e.clientX - drag.x; drag = null; cv.style.cursor = "grab";
+      if (Math.abs(dx) < 6) return;
+      const ms = -dx / pw * (t1 - t0);
+      if (ms > 0 && !d.has_newer) { c.putImageData(base, 0, 0); return; }
+      shiftEvo(ms);
+    });
+    cv.addEventListener("pointermove", (ev) => {
+      if (drag) { c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, cv.width, cv.height); c.putImageData(base, (ev.clientX - drag.x) * dpr, 0); c.restore(); return; }
+      if (!pts.length) return;
+      const r = cv.getBoundingClientRect(), tm = t0 + (ev.clientX - r.left - padL) / pw * (t1 - t0);
+      let best = pts[0]; for (const p of pts) if (Math.abs(p.ms - tm) < Math.abs(best.ms - tm)) best = p;
+      const here = pts.filter((p) => p.t === best.t);
+      c.putImageData(base, 0, 0); c.save(); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+      c.strokeStyle = "rgba(244,234,217,.35)"; c.lineWidth = 1; c.beginPath(); c.moveTo(X(best.ms), padT); c.lineTo(X(best.ms), H - padB); c.stroke(); c.restore();
+      const half = d.step * 500;
+      tip.innerHTML = `<b>${esc(fmtFull(best.ms - half))} – ${esc(new Date(best.ms + half).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}</b><br>` +
+        here.map((p) => `<span style="color:${DESK_HEX[p.desk]}">●</span> ${p.desk}: best <b>${p.v.toFixed(2)}</b> of ${p.runs} run${p.runs === 1 ? "" : "s"}` +
+          (p.promoted ? " · <b>new champion</b>" : p.champ != null ? ` · champion ${p.champ.toFixed(2)}` : "")).join("<br>");
+      tip.style.display = "block"; tip.style.left = Math.max(0, Math.min(X(best.ms) + 12, W - 270)) + "px"; tip.style.top = "10px";
+    });
+    cv.addEventListener("mouseleave", () => { if (!drag) { c.putImageData(base, 0, 0); tip.style.display = "none"; } });
+  }
+  function shiftEvo(ms) {
+    const end = Math.min(Date.now(), (evoEnd ? Date.parse(evoEnd) : Date.now()) + ms);
+    evoEnd = end >= Date.now() - 60e3 ? null : new Date(end).toISOString();
+    drawEvo();
   }
   async function drawEquity() {
     const holder = $("#eqchart"); if (!holder) return;

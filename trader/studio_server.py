@@ -122,6 +122,43 @@ def equity_series(rng):
             for r in df.itertuples()]
 
 
+# window length and slot size for the neuroevolution chart (~36-48 evenly spaced slots per window)
+EVO_SPANS = {"6H": (6 * 3600, 600), "1D": (86400, 1800), "1W": (7 * 86400, 4 * 3600), "1M": (30 * 86400, 86400)}
+
+
+def evolution_series(span="1D", end=None):
+    """Training runs grouped into evenly spaced time slots, for one window of the evolution chart.
+    Each point = the best unseen-data score a desk reached in that slot (plus how many runs, and
+    whether a new champion was promoted). end=None means the most recent window."""
+    length, step = EVO_SPANS.get(span, EVO_SPANS["1D"])
+    now = datetime.now(timezone.utc).timestamp()
+    try:
+        t_end = min(now, datetime.fromisoformat(end).timestamp()) if end else now
+    except ValueError:
+        t_end = now
+    end_s = (int(t_end) // step + 1) * step
+    start_s = end_s - length
+    iso = lambda s: datetime.fromtimestamp(s, timezone.utc).isoformat(timespec="seconds")
+    rows = db.query("SELECT ts, desk, best_holdout, champion_holdout, promoted FROM evolution_log "
+                    "WHERE ts >= ? AND ts < ? ORDER BY ts", (iso(start_s), iso(end_s)))
+    slots = {}
+    for r in rows:
+        if r["best_holdout"] is None:
+            continue
+        k = (r["desk"], int((datetime.fromisoformat(r["ts"]).timestamp() - start_s) // step))
+        x = slots.setdefault(k, {"v": r["best_holdout"], "runs": 0, "promoted": 0, "champ": None})
+        x["v"] = max(x["v"], r["best_holdout"])
+        x["runs"] += 1
+        x["promoted"] |= int(r["promoted"] or 0)
+        x["champ"] = r["best_holdout"] if r["promoted"] else (r["champion_holdout"] if r["champion_holdout"] is not None else x["champ"])
+    first = (db.one("SELECT MIN(ts) t FROM evolution_log") or {}).get("t")
+    return {"span": span, "step": step, "start": iso(start_s), "end": iso(end_s),
+            "has_older": bool(first and first < iso(start_s)), "has_newer": end_s < now,
+            "points": [{"desk": d, "t": iso(start_s + (i + .5) * step), "v": round(x["v"], 3), "runs": x["runs"],
+                        "promoted": x["promoted"], "champ": None if x["champ"] is None else round(x["champ"], 3)}
+                       for (d, i), x in sorted(slots.items(), key=lambda kv: kv[0][1])]}
+
+
 def dashboard():
     b = broker()
     acct = cached("account", 20, b.account) or {}
@@ -162,14 +199,12 @@ def dashboard():
                        "FROM debates ORDER BY id DESC LIMIT 25")
     for x in debates:
         x["pros"], x["cons"] = json.loads(x["pros"] or "[]"), json.loads(x["cons"] or "[]")
-    evo = db.query("SELECT ts, desk, generations, best_train, best_holdout, champion_holdout, promoted, note "
-                   "FROM evolution_log ORDER BY id")
     from . import crypto_shadow
     crypto_stage = crypto_shadow.stage(brain.champion("crypto"))
     spy_now = (db.one("SELECT spy FROM equity WHERE spy IS NOT NULL ORDER BY ts DESC LIMIT 1") or {}).get("spy")
     return {"account": acct, "start": db.kv_get("start") or {}, "spy_now": spy_now, "desks": desks,
             "crypto_stage": crypto_stage, "positions": positions,
-            "trades": trades, "decisions": decisions, "debates": debates, "evolution": evo,
+            "trades": trades, "decisions": decisions, "debates": debates,
             "llm": llm.usage_summary(1), "llm_available": {t: llm.available(t) for t in ("smart", "fast")},
             "challenger": db.kv_get("challenger_scorecard") or {},
             "market": db.kv_get("market_context") or {},
@@ -350,6 +385,9 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/equity":
                 rng = q.get("range", "1M")
                 return self._send(200, cached(f"equity:{rng}", 60, lambda: equity_series(rng)) or [])
+            if u.path == "/api/evolution":
+                span, end = q.get("span", "1D"), q.get("end") or None
+                return self._send(200, cached(f"evo:{span}:{end}", 10, lambda: evolution_series(span, end)))
             if u.path == "/api/chat/history":
                 aid = q.get("agent", "")
                 return self._send(200, db.query("SELECT role, text, ts FROM chats WHERE agent=? ORDER BY id DESC LIMIT 60",
