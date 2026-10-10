@@ -64,8 +64,14 @@
   World.onHover = (h) => {
     const tip = $("#tooltip");
     if (!h) { tip.style.display = "none"; return; }
-    const a = STATE?.agents.find((x) => x.id === h.bot.id); if (!a) return;
-    tip.innerHTML = `<b>${a.badge} ${esc(a.name)}</b><small>${esc(a.role)}</small><p>${a.busy ? "🟢 " : "🟡 "}${esc(a.activity)}</p><small>Click to chat</small>`;
+    if (h.dog) {
+      const n = h.dog.pets;
+      tip.innerHTML = `<b>🐶 ${esc(h.dog.name)}</b><small>The studio dog</small><p>${h.dog.asleep ? "💤 Napping (petting is still welcome)" : "🐾 Good dog"}</p>` +
+        `<small>Click to pet${n ? ` · petted ${n} time${n === 1 ? "" : "s"}` : ""}</small>`;
+    } else {
+      const a = STATE?.agents.find((x) => x.id === h.bot.id); if (!a) return;
+      tip.innerHTML = `<b>${a.badge} ${esc(a.name)}</b><small>${esc(a.role)}</small><p>${a.busy ? "🟢 " : "🟡 "}${esc(a.activity)}</p><small>Click to chat</small>`;
+    }
     tip.style.display = "block"; tip.style.left = Math.min(h.x + 16, innerWidth - 300) + "px"; tip.style.top = (h.y + 10) + "px";
   };
 

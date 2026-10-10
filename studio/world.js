@@ -116,7 +116,7 @@
   add("coffeetable", 24, 27, 6, 2); add("armchair", 34, 22, 1, 1, { color: C.sofa2, face: "w" }, false);
   add("armchair", 34, 25, 1, 1, { color: C.sofa2, face: "w" }, false);
   add("tv", 40, 25, 1, 5); add("lamp", 18, 17, 1, 1); add("plant", 39, 35, 1, 1); add("plant", 18, 35, 1, 1);
-  add("plant", 34, 16, 1, 1); add("catbed", 29, 18, 1, 1, {}, false);
+  add("plant", 34, 16, 1, 1); add("dogbed", 29, 18, 1, 1, {}, false);
   lights.push({ x: 18.5, y: 17.5, r: 5, color: "255,190,110", kind: "lamp" });
   lights.push({ x: 25, y: 17.4, r: 7, color: "255,140,60", kind: "fire" });
   lights.push({ x: 39.5, y: 27.5, r: 3, color: "140,180,255", kind: "screen" });
@@ -475,7 +475,7 @@
         c.fillStyle = C.woodDark; rr(c, X + 6, Y, 20, h, 4); c.fill();
         c.fillStyle = "#111"; rr(c, X + 18, Y + 10, 10, h - 20, 2); c.fill(); break;
       }
-      case "catbed": { c.fillStyle = "#8e3f3a"; c.beginPath(); c.arc(X + 16, Y + 16, 14, 0, 7); c.fill(); c.fillStyle = "#e9dcc5"; c.beginPath(); c.arc(X + 16, Y + 16, 10, 0, 7); c.fill(); break; }
+      case "dogbed": { c.fillStyle = "#4f6d8e"; c.beginPath(); c.arc(X + 16, Y + 16, 14, 0, 7); c.fill(); c.fillStyle = "#e9dcc5"; c.beginPath(); c.arc(X + 16, Y + 16, 10, 0, 7); c.fill(); break; }
       case "clock": break;
     }
   }
@@ -690,36 +690,78 @@
     c.restore();
   }
 
-  // ------------------------------------------------------------------ the cat
-  const cat = { x: 29.5 * T, y: 18.5 * T, path: [], until: 0, sleep: true, face: 1 };
-  const CAT_SPOTS = [[29, 18], [26, 25], [30, 23], [23, 29], [35, 30], [12, 24], [46, 33], [29, 19]];
-  function updateCat(now, dt) {
-    if (cat.path.length) {
-      const [tx, ty] = cat.path[0], dx = tx - cat.x, dy = ty - cat.y, d = Math.hypot(dx, dy), sp = 55 * dt;
-      cat.face = dx >= 0 ? 1 : -1;
-      if (d <= sp) { cat.x = tx; cat.y = ty; cat.path.shift(); if (!cat.path.length) { cat.until = now + rand(20, 80); cat.sleep = Math.random() < .6; } }
-      else { cat.x += dx / d * sp; cat.y += dy / d * sp; }
-    } else if (now > cat.until) {
-      const [tx, ty] = pick(CAT_SPOTS), p = astar(Math.floor(cat.x / T), Math.floor(cat.y / T), tx, ty);
-      if (p) { cat.path = p.slice(1).map(([x, y]) => [(x + .5) * T, (y + .5) * T]); cat.sleep = false; } else cat.until = now + 5;
+  // ------------------------------------------------------------------ the dog (click to pet)
+  const DOG_NAME = "Biscuit";
+  const dog = { x: 29.5 * T, y: 18.5 * T, path: [], until: 0, sleep: true, face: 1, petUntil: 0, hearts: [], bubble: null, pets: 0 };
+  try { dog.pets = +localStorage.getItem("dogPets") || 0; } catch (e) {}
+  const DOG_SPOTS = [[29, 18], [26, 25], [30, 23], [23, 29], [35, 30], [12, 24], [46, 33], [29, 19]];
+  const PET_LINES = ["*happy wag* 🐾", "Woof! ♥", "*leans into the scritches*", "*rolls over for belly rubs*", "Arf! 😊", "*tail goes brrrr*"];
+  function dogWalkTo(now, tx, ty) {
+    const p = astar(Math.floor(dog.x / T), Math.floor(dog.y / T), tx, ty);
+    if (p) { dog.path = p.slice(1).map(([x, y]) => [(x + .5) * T, (y + .5) * T]); dog.sleep = false; } else dog.until = now + 5;
+  }
+  function updateDog(now, dt) {
+    if (dog.bubble && now > dog.bubble.until) dog.bubble = null;
+    dog.hearts = dog.hearts.filter((h) => now - h.t0 < 1.6);
+    if (now < dog.petUntil) return;                       // sits still while being petted
+    if (dog.path.length) {
+      const [tx, ty] = dog.path[0], dx = tx - dog.x, dy = ty - dog.y, d = Math.hypot(dx, dy), sp = 62 * dt;
+      if (Math.abs(dx) > .1) dog.face = dx >= 0 ? 1 : -1;
+      if (d <= sp) { dog.x = tx; dog.y = ty; dog.path.shift(); if (!dog.path.length) { dog.until = now + rand(15, 60); dog.sleep = Math.random() < .5; } }
+      else { dog.x += dx / d * sp; dog.y += dy / d * sp; }
+    } else if (now > dog.until) {
+      // sometimes trot over to visit one of the bots, otherwise to a favourite spot
+      const vis = [...bots.values()].filter((b) => !b.sleeping);
+      if (vis.length && Math.random() < .35) { const b = pick(vis); dogWalkTo(now, Math.floor(b.x / T) + (Math.random() < .5 ? 1 : -1), Math.floor(b.y / T) + 1); }
+      else { const [tx, ty] = pick(DOG_SPOTS); dogWalkTo(now, tx, ty); }
     }
   }
-  function drawCat(c, t) {
-    const x = cat.x, y = cat.y, f = cat.face;
-    c.fillStyle = "rgba(20,10,5,.3)"; c.beginPath(); c.ellipse(x, y + 5, 10, 4, 0, 0, 7); c.fill();
-    if (cat.sleep && !cat.path.length) {
-      c.fillStyle = "#e08a3c"; c.beginPath(); c.arc(x, y, 8, 0, 7); c.fill();
-      c.strokeStyle = "#e08a3c"; c.lineWidth = 3; c.beginPath(); c.arc(x, y, 9, 0.2, 2.2); c.stroke();
-      c.fillStyle = "#f2b06b"; c.beginPath(); c.arc(x - 3, y - 2, 4, 0, 7); c.fill();
+  function petDog() {
+    const now = performance.now() / 1000;
+    dog.pets++; try { localStorage.setItem("dogPets", dog.pets); } catch (e) {}
+    dog.sleep = false; dog.petUntil = now + 3.5; dog.until = now + rand(6, 14);
+    for (let i = 0; i < 3; i++) dog.hearts.push({ x: dog.x + (i - 1) * 14 + rand(-3, 3), y: dog.y - 8, t0: now + i * .18 });
+    dog.bubble = { text: pick(PET_LINES), born: now, until: now + 3 };
+  }
+  function dogAt(px, py) { const [wx, wy] = toWorld(px, py); return Math.hypot(dog.x - wx, dog.y - 2 - wy) < 16; }
+  function drawDog(c, t) {
+    const x = dog.x, y = dog.y, f = dog.face, fur = "#d9a35b", dark = "#a8692e";
+    c.fillStyle = "rgba(20,10,5,.3)"; c.beginPath(); c.ellipse(x, y + 6, 11, 4, 0, 0, 7); c.fill();
+    if (dog.sleep && !dog.path.length && t > dog.petUntil) {       // curled up asleep
+      c.fillStyle = fur; c.beginPath(); c.ellipse(x, y, 10, 8, 0, 0, 7); c.fill();
+      c.strokeStyle = fur; c.lineWidth = 3.5; c.lineCap = "round"; c.beginPath(); c.arc(x, y, 10, 0.3, 1.9); c.stroke(); c.lineCap = "butt";
+      c.fillStyle = "#e8bd7c"; c.beginPath(); c.arc(x - 4, y - 1, 5, 0, 7); c.fill();
+      c.fillStyle = dark; c.beginPath(); c.ellipse(x - 7.5, y - 1, 2.6, 4.2, .3, 0, 7); c.fill();
+      c.fillStyle = "#2b2420"; c.beginPath(); c.arc(x - 1, y + 1.5, 1.2, 0, 7); c.fill();
+      c.font = `700 8px ${FONT}`; c.fillStyle = `rgba(255,255,255,${.5 + Math.sin(t * 2) * .3})`; c.fillText("z", x + 6, y - 9 - (t * 4 % 4));
       return;
     }
-    const sw = Math.sin(t * 5) * .4;
-    c.strokeStyle = "#e08a3c"; c.lineWidth = 2.5; c.beginPath(); c.moveTo(x - 8 * f, y); c.quadraticCurveTo(x - 14 * f, y - 4 + sw * 6, x - 16 * f, y - 9); c.stroke();
-    c.fillStyle = "#e08a3c"; c.beginPath(); c.ellipse(x, y, 9, 5.5, 0, 0, 7); c.fill();
-    c.beginPath(); c.arc(x + 8 * f, y - 2, 4.6, 0, 7); c.fill();
-    c.beginPath(); c.moveTo(x + 6 * f, y - 5); c.lineTo(x + 7 * f, y - 10); c.lineTo(x + 9.5 * f, y - 5.5); c.fill();
-    c.beginPath(); c.moveTo(x + 9 * f, y - 5); c.lineTo(x + 11.5 * f, y - 9.5); c.lineTo(x + 12 * f, y - 4); c.fill();
-    c.fillStyle = "#2b2420"; c.beginPath(); c.arc(x + 10 * f, y - 2.5, .9, 0, 7); c.fill();
+    const petting = t < dog.petUntil, walking = dog.path.length > 0;
+    const wag = Math.sin(t * (petting ? 28 : walking ? 12 : 6)) * (petting ? 1 : .6);
+    const bob = walking ? Math.abs(Math.sin(t * 10)) * 1.2 : 0, by = y - bob;
+    // tail
+    c.strokeStyle = fur; c.lineWidth = 3; c.lineCap = "round";
+    c.beginPath(); c.moveTo(x - 9 * f, by - 1); c.quadraticCurveTo(x - 14 * f, by - 5 + wag * 4, x - 15 * f + wag * 3 * f, by - 10); c.stroke(); c.lineCap = "butt";
+    // legs
+    c.fillStyle = dark; const step = walking ? Math.sin(t * 14) * 1.5 : 0;
+    for (const [lx, s] of [[-6, 1], [-3, -1], [4, -1], [7, 1]]) c.fillRect(x + lx * f - 1, by + 3, 2.2, 4 + s * step * (walking ? 1 : 0));
+    // body + head
+    c.fillStyle = fur; c.beginPath(); c.ellipse(x, by, 10.5, 6, 0, 0, 7); c.fill();
+    const hx = x + 9 * f, hy = by - 4 - (petting ? 1.5 : 0);
+    c.beginPath(); c.arc(hx, hy, 5.4, 0, 7); c.fill();
+    c.fillStyle = "#e8bd7c"; c.beginPath(); c.ellipse(hx + 4 * f, hy + 1.5, 3.4, 2.4, 0, 0, 7); c.fill();   // snout
+    c.fillStyle = dark; c.beginPath(); c.ellipse(hx - 2.5 * f, hy + 1, 2.4, 4.6, f * .35, 0, 7); c.fill();  // floppy ear
+    c.fillStyle = "#2b2420"; c.beginPath(); c.arc(hx + 7 * f, hy + 1, 1.3, 0, 7); c.fill();              // nose
+    if (petting) { c.strokeStyle = "#2b2420"; c.lineWidth = 1; c.beginPath(); c.arc(hx + 1.5 * f, hy - 1.5, 1.2, Math.PI * 1.1, Math.PI * 1.9); c.stroke(); }  // happy closed eye
+    else { c.beginPath(); c.arc(hx + 1.8 * f, hy - 1.6, 1, 0, 7); c.fill(); }
+    if (petting || walking) { c.fillStyle = "#e46a7a"; c.beginPath(); c.ellipse(hx + 4.5 * f, hy + 4.2, 1.3, 1.9, 0, 0, 7); c.fill(); }  // tongue
+    c.fillStyle = "#c0392b"; c.fillRect(hx - 4.5 * f - (f < 0 ? 1.6 : 0), hy + 2.5, 1.6, 4);                                          // collar
+  }
+  function drawDogFx(c, now) {
+    if (dog.bubble) drawBubble(c, { x: dog.x, y: dog.y + 26, bubble: dog.bubble }, now);
+    c.save(); c.font = `12px "Segoe UI Emoji", ${FONT}`; c.textAlign = "center";
+    for (const h of dog.hearts) { const a = now - h.t0; if (a < 0) continue; c.globalAlpha = Math.max(0, 1 - a / 1.6); c.fillText("❤️", h.x + Math.sin(a * 5) * 3, h.y - a * 22); }
+    c.restore();
   }
 
   // ------------------------------------------------------------------ lighting
@@ -802,16 +844,18 @@
       const r = canvas.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
       if (drag) { const dx = e.clientX - drag.x, dy = e.clientY - drag.y; moved = Math.max(moved, Math.hypot(dx, dy)); if (moved > 4) canvas.classList.add("dragging"); cam.x = drag.cx - dx / cam.z; cam.y = drag.cy - dy / cam.z; clampCam(); }
       hover = drag && moved > 4 ? null : botAt(px, py);
+      const overDog = !hover && !(drag && moved > 4) && dogAt(px, py);
       const [wx, wy] = toWorld(px, py), overBoard = wx > 25 * T && wx < 38 * T && wy < 2.2 * T;
-      canvas.style.cursor = drag && moved > 4 ? "grabbing" : hover || overBoard ? "pointer" : "grab";
-      World.onHover(hover ? { bot: hover, x: px, y: py } : null);
+      canvas.style.cursor = drag && moved > 4 ? "grabbing" : hover || overDog || overBoard ? "pointer" : "grab";
+      World.onHover(hover ? { bot: hover, x: px, y: py } : overDog ? { dog: { name: DOG_NAME, pets: dog.pets, asleep: dog.sleep && !dog.path.length }, x: px, y: py } : null);
     });
     canvas.addEventListener("pointerup", (e) => {
       canvas.classList.remove("dragging");
       if (drag && moved <= 4) {
         const r = canvas.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top, b = botAt(px, py);
         const [wx, wy] = toWorld(px, py);
-        if (b) onBot(b.id);
+        if (dogAt(px, py) && (!b || Math.hypot(dog.x - wx, dog.y - wy) < Math.hypot(b.x - wx, b.y - 12 - wy))) { petDog(); World.onHover({ dog: { name: DOG_NAME, pets: dog.pets, asleep: false }, x: px, y: py }); }
+        else if (b) onBot(b.id);
         else if (wx > 25 * T && wx < 38 * T && wy < 2.2 * T) onBoard();
         else if (wx > 51.5 * T && wx < 53 * T && wy > 4.8 * T && wy < 6 * T) onShelf();
       }
@@ -831,14 +875,14 @@
     scene.darkness = darknessNow();
     if (cam.follow) { const b = bots.get(cam.follow); if (b) { cam.x += (b.x - cam.x) * .08; cam.y += (b.y - cam.y) * .08; } if (now > cam.followUntil) cam.follow = null; }
     for (const b of bots.values()) updateBot(b, now, dt);
-    updateCat(now, dt);
+    updateDog(now, dt);
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#1c1714"; ctx.fillRect(0, 0, canvas.width, canvas.height);
     const z = cam.z * dpr;
     ctx.setTransform(z, 0, 0, z, (vw / 2 - cam.x * cam.z) * dpr, (vh / 2 - cam.y * cam.z) * dpr);
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(stat, 0, 0, PW, PH);
     drawScreens(ctx, now, dt);
-    drawCat(ctx, now);
+    drawDog(ctx, now);
     const sorted = [...bots.values()].sort((a, b) => a.y - b.y);
     for (const b of sorted) {
       if (b === hover) { ctx.strokeStyle = "rgba(232,180,90,.9)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(b.x, b.y + 10, 16, 7, 0, 0, 7); ctx.stroke(); }
@@ -847,6 +891,7 @@
     ctx.setTransform(1, 0, 0, 1, 0, 0); drawLighting(ctx, now);
     ctx.setTransform(z, 0, 0, z, (vw / 2 - cam.x * cam.z) * dpr, (vh / 2 - cam.y * cam.z) * dpr);
     for (const b of sorted) drawBubble(ctx, b, now);
+    drawDogFx(ctx, now);
     requestAnimationFrame(frame);
   }
 
@@ -899,7 +944,7 @@
       if (b) { b.chatting = true; if (!b.path.length) { b.face = "s"; b.until = Infinity; } }
     },
     say(id, text) { const b = bots.get(id); if (b) say(b, text, 9); },
-    _bots: bots, _astar: astar, _solid: solid,
+    _bots: bots, _astar: astar, _solid: solid, _dog: dog, _petDog: petDog, _cam: cam,
   };
   window.World = World;
 })();
