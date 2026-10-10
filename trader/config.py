@@ -174,7 +174,7 @@ DESKS = {
     "long": Desk(
         name="long", title="Long-term investing", timeframe="1Day",
         sleeve=_f("SLEEVE_LONG", 0.45), sleeve_min=0.30, sleeve_max=0.60,
-        max_positions=_i("MAX_POSITIONS_LONG", 12), risk_per_trade=0.01, daily_loss_pct=0.08,
+        max_positions=_i("MAX_POSITIONS_LONG", 12), risk_per_trade=_f("RISK_PER_TRADE_LONG", 0.0125), daily_loss_pct=0.08,
         cost_per_side=0.0005, hold_range=(4, 50), stop_range=(3.0, 15.0), target_range=(4.0, 40.0),
         min_stop=0.06, path_len=50, path_step=5, decision_step=5,
         history_days=_i("LONG_HISTORY_DAYS", 2200), train_symbols=700, min_trades=60,
