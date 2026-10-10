@@ -176,28 +176,37 @@ def _worker_fit(vecs):
     return [simulate(v, _W["ds"], _W["desk"], "train")["fitness"] for v in vecs]
 
 
-def evolve(ds, desk, population=None, generations=12, pop_size=32, time_budget=90, seed=None, workers=1):
+def make_pool(ds, desk, workers):
+    """A pool of worker processes that already hold the dataset (keep it around to skip the ~2-3s start-up)."""
+    import os
+    from concurrent.futures import ProcessPoolExecutor
+    # one math thread per worker process, otherwise they fight over the same cores
+    for v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+        os.environ[v] = "1"
+    return ProcessPoolExecutor(max_workers=workers, initializer=_worker_init, initargs=(ds, desk))
+
+
+def evolve(ds, desk, population=None, generations=12, pop_size=32, time_budget=90, seed=None, workers=1,
+           pool=None, n_cands=6):
     """Runs the genetic algorithm. Returns (population, top candidates with
-    train + holdout stats, generations run). workers > 1 scores brains on several CPU cores at once."""
-    pool = None
+    train + holdout stats, generations run). workers > 1 scores brains on several CPU cores at once;
+    pass a ready-made `pool` (from make_pool) to reuse one. n_cands = how many of the best brains
+    (by training score) get checked on the unseen holdout data."""
+    if pool is not None:
+        return _evolve(ds, desk, population, generations, pop_size, time_budget, seed, pool, workers, n_cands)
     if workers > 1:
-        import os
-        from concurrent.futures import ProcessPoolExecutor
-        # one math thread per worker process, otherwise they fight over the same cores
-        for v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
-            os.environ[v] = "1"
         try:
-            pool = ProcessPoolExecutor(max_workers=workers, initializer=_worker_init, initargs=(ds, desk))
+            pool = make_pool(ds, desk, workers)
         except Exception:
             pool = None
     try:
-        return _evolve(ds, desk, population, generations, pop_size, time_budget, seed, pool, workers)
+        return _evolve(ds, desk, population, generations, pop_size, time_budget, seed, pool, workers, n_cands)
     finally:
         if pool:
             pool.shutdown(wait=True, cancel_futures=True)
 
 
-def _evolve(ds, desk, population, generations, pop_size, time_budget, seed, pool, workers):
+def _evolve(ds, desk, population, generations, pop_size, time_budget, seed, pool, workers, n_cands=6):
     rng = np.random.default_rng(seed)
     F = len(ds["feats"])
     G = n_genes(F)
@@ -217,7 +226,8 @@ def _evolve(ds, desk, population, generations, pop_size, time_budget, seed, pool
     for _ in range(generations):
         fits = score_all(pop)
         gens += 1
-        if time.time() - t0 > time_budget:
+        # stop right after scoring, so the final population and its scores always belong together
+        if gens >= generations or time.time() - t0 > time_budget:
             break
         order = np.argsort(-fits)
         new = [pop[i].copy() for i in order[:4]]                     # elites survive unchanged
@@ -235,11 +245,13 @@ def _evolve(ds, desk, population, generations, pop_size, time_budget, seed, pool
             new.append(child)
         new += [random_vec(F, rng) for _ in range(2)]                  # fresh blood
         pop = new
-    if fits is None or len(fits) != len(pop):
+    if fits is None:
         fits = score_all(pop)
     order = np.argsort(-fits)
+    pop = [pop[i] for i in order]                                     # best first (the lab keeps the top when reseeding)
+    order = np.arange(len(pop))
     cands = []
-    for i in order[:6]:
+    for i in order[:n_cands]:
         cands.append({"vec": pop[i], "train": simulate(pop[i], ds, desk, "train"),
                       "holdout": simulate(pop[i], ds, desk, "holdout")})
     cands.sort(key=lambda c: c["holdout"]["fitness"], reverse=True)

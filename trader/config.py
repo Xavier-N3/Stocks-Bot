@@ -187,7 +187,7 @@ DESKS = {
         max_positions=_i("MAX_POSITIONS_CRYPTO", 2), risk_per_trade=0.004, daily_loss_pct=0.05,
         cost_per_side=0.0030, hold_range=(2, 48), stop_range=(1.0, 6.0), target_range=(1.0, 10.0),
         min_stop=0.012, path_len=48, path_step=1, decision_step=1,
-        history_days=_i("CRYPTO_HISTORY_DAYS", 1000), train_symbols=20, min_trades=60,
+        history_days=_i("CRYPTO_HISTORY_DAYS", 1000), train_symbols=20, min_trades=90,   # 90 -> ~30 on unseen data, the clearance bar
         evolve_cooldown_min=60, periods_per_year=24 * 365, bench="BTC/USD", close_targets=True,
     ),
 }
@@ -199,6 +199,14 @@ CRYPTO_TRAIN_EVERY_MIN = _i("CRYPTO_TRAIN_EVERY_MIN", 15)   # how often the lab 
 # desks every few minutes. Switches itself off (back to the normal pace) as soon as one passes.
 TRAINING_RUSH = _b("TRAINING_RUSH", True)
 RUSH_OTHERS_EVERY_MIN = _i("RUSH_OTHERS_EVERY_MIN", 5)
+# Crypto boost (part of rush mode): bigger, longer crypto runs on a worker pool that stays warm, more candidates
+# checked on unseen data, and a fresh gene pool whenever the search stalls. All 6 physical CPU cores are already
+# in use, so this squeezes more out of the same hardware rather than adding cores.
+CRYPTO_BOOST = _b("CRYPTO_BOOST", True)
+BOOST_POP = _i("BOOST_POP", 96)
+BOOST_GENS = _i("BOOST_GENS", 60)
+BOOST_CANDIDATES = _i("BOOST_CANDIDATES", 16)
+BOOST_STALL_RUNS = _i("BOOST_STALL_RUNS", 30)   # runs without a new champion before the gene pool is shaken up
 LAB_WORKERS = _i("LAB_WORKERS", max(1, min(6, (os.cpu_count() or 2) - 4)))  # CPU cores used for training
 CRYPTO_ENABLED_DEFAULT = _b("CRYPTO_ENABLED", True)   # the Studio toggle overrides this at runtime
 
