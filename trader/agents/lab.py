@@ -21,11 +21,25 @@ class Lab(Agent):
         super().__init__()
         self.broker = Broker()
         self.cache = {}
+        self.rushing = False
 
     def wait_seconds(self):
-        return 60
+        return 5 if self.rushing else 60
+
+    def _rush(self):
+        """True until a crypto brain passes the strict backtest bar (then it moves on to shadow testing)."""
+        if not config.TRAINING_RUSH or not risk.crypto_enabled():
+            return False
+        from .. import crypto_shadow
+        return crypto_shadow.stage(brain.champion("crypto"))["stage"] == "training"
 
     def step(self):
+        rush = self._rush()
+        if rush != self.rushing:
+            db.event(self.name, "Rush training ON: crypto trains nonstop, other desks every "
+                                f"{config.RUSH_OTHERS_EVERY_MIN} min until a crypto brain passes" if rush else
+                                "A crypto brain passed the backtest bar - rush training OFF, back to the normal pace")
+            self.rushing = rush
         for name in config.DESKS:
             if self._data_ready(name) and self._due(name):
                 self._evolve(name)
@@ -45,6 +59,8 @@ class Lab(Agent):
         if not last:
             return True
         age = datetime.now(timezone.utc) - datetime.fromisoformat(last)
+        if self.rushing:
+            return name == "crypto" or age >= timedelta(minutes=config.RUSH_OTHERS_EVERY_MIN)
         if name == "crypto" and brain.status(brain.champion("crypto")) != "active":
             return age >= timedelta(minutes=config.CRYPTO_TRAIN_EVERY_MIN)   # keep training until good enough
         req = db.kv_get(f"evolve_request:{name}")

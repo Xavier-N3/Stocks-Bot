@@ -195,6 +195,10 @@ DESKS = {
 # with no trades there, so their prices are unreliable for both testing and trading.
 CRYPTO_UNIVERSE = _list("CRYPTO_SYMBOLS", "BTC/USD,ETH/USD,SOL/USD,XRP/USD")
 CRYPTO_TRAIN_EVERY_MIN = _i("CRYPTO_TRAIN_EVERY_MIN", 15)   # how often the lab retrains crypto until it's cleared
+# Rush mode: until a crypto brain passes the strict backtest bar, train crypto nonstop and the other
+# desks every few minutes. Switches itself off (back to the normal pace) as soon as one passes.
+TRAINING_RUSH = _b("TRAINING_RUSH", True)
+RUSH_OTHERS_EVERY_MIN = _i("RUSH_OTHERS_EVERY_MIN", 5)
 LAB_WORKERS = _i("LAB_WORKERS", max(1, min(6, (os.cpu_count() or 2) - 4)))  # CPU cores used for training
 CRYPTO_ENABLED_DEFAULT = _b("CRYPTO_ENABLED", True)   # the Studio toggle overrides this at runtime
 
