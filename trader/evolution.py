@@ -117,13 +117,11 @@ def simulate(vec, ds, desk, part="train", trades_out=None):
     exit_bar = np.where(stopped, fs, np.where(targeted, ft, Hh - 1))
 
     sym = ds["sym"][rows]
-    # "busy" is tracked per market: a forex pair and its _SHORT twin share one slot (can't be long AND short)
-    slot = ds["slot"][rows] if "slot" in ds else sym
     step = desk.path_step
     pnl = np.zeros(d1 - d0)
     taken = []
     heap, next_free, day_used = [], {}, {}
-    dl, sl, el, rl = d.tolist(), slot.tolist(), exit_bar.tolist(), ret.tolist()   # plain lists: faster loop
+    dl, sl, el, rl = d.tolist(), sym.tolist(), exit_bar.tolist(), ret.tolist()   # plain lists: faster loop
     n_rows, k = len(dl), 0
     while k < n_rows:
         dd, sy = dl[k], sl[k]

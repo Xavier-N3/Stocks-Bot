@@ -33,7 +33,7 @@ def review(desk_name: str, picks: list, agent_name: str) -> dict:
         b = p.get("brief") or {}
         data = json.loads(b.get("data") or "{}") if isinstance(b.get("data"), str) else {}
         lines.append(
-            f"{p['symbol']} @ {p['price']:.6g} | quant {p['score']:+.3f} (threshold {p['thr']:+.3f}) | stop "
+            f"{p['symbol']} @ ${p['price']:.2f} | quant {p['score']:+.3f} (threshold {p['thr']:+.3f}) | stop "
             f"-{p['stop_pct'] * 100:.1f}% target +{p['target_pct'] * 100:.1f}% | numbers {json.dumps(data.get('numbers', {}))}\n"
             f"  research: {b.get('summary') or '-'} | sentiment {b.get('sentiment')} | catalysts: {b.get('catalysts') or '-'}"
             f" | risks: {b.get('risks') or '-'}\n"

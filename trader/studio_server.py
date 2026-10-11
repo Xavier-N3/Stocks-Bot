@@ -166,24 +166,12 @@ def dashboard():
     prices = {s: p["price"] for s, p in alp.items()}
     sl = risk.sleeves()
     desks = []
-    fx = forex_state()
     for d, desk in config.DESKS.items():
         champ = brain.champion(d)
         allt = db.one("SELECT COUNT(*) n, SUM(pnl>0) w, SUM(pnl) p, AVG(pnl_pct) a FROM positions WHERE desk=? AND "
                       "status='closed' AND genome_id != 'legacy'", (d,))
         led = b.ledger(d)
         upl = sum(alp[p["symbol"]]["upl"] for p in led if p["symbol"] in alp)
-        if d == "forex":
-            desks.append({"id": d, "title": desk.title, "brain": brain.status(champ), "sleeve": 0, "size_mult": risk.size_mult(d),
-                          "positions": len(led), "max_positions": desk.max_positions, "invested": fx.get("exposure", 0),
-                          "capital": fx.get("budget", 0), "trades": allt["n"], "wins": allt["w"] or 0,
-                          "realized": allt["p"] or 0, "avg": allt["a"], "unrealized": fx.get("upl", 0),
-                          "backtest": (champ or {}).get("holdout", {}), "params": (champ or {}).get("params", {}),
-                          "champion": (champ or {}).get("id"), "connected": fx.get("connected", False),
-                          "llm_mode": db.kv_get(f"llm_mode:{d}") or config.LLM_TRADE_MODE,
-                          "challenger_mode": db.kv_get(f"challenger_mode:{d}") or
-                          ("advisory" if config.LLM_TRADE_MODE == "advisory" else "veto")})
-            continue
         desks.append({"id": d, "title": desk.title, "brain": brain.status(champ), "sleeve": sl[d],
                       "size_mult": risk.size_mult(d), "positions": len(led), "max_positions": risk.max_positions(d, acct) if acct else desk.max_positions,
                       "invested": risk.desk_exposure(d, prices), "capital": (acct.get("equity") or 0) * sl[d],
@@ -197,9 +185,6 @@ def dashboard():
     positions = []
     for p in b.ledger(None):
         a = alp.get(p["symbol"], {})
-        if p["desk"] == "forex":
-            px = fx.get("prices", {}).get(p["symbol"])
-            a = {"price": px, "uplpc": (px / p["entry_price"] - 1) if px and p["entry_price"] else None}
         positions.append({"desk": p["desk"], "symbol": p["symbol"], "status": p["status"], "qty": p["qty"],
                           "entry": p["entry_price"], "price": a.get("price"), "value": a.get("value"),
                           "upl": a.get("upl"), "uplpc": a.get("uplpc"), "stop": p["stop_price"],
@@ -216,11 +201,9 @@ def dashboard():
         x["pros"], x["cons"] = json.loads(x["pros"] or "[]"), json.loads(x["cons"] or "[]")
     from . import crypto_shadow
     crypto_stage = crypto_shadow.stage(brain.champion("crypto"))
-    forex_stage = (crypto_shadow.stage(brain.champion("forex")) if config.FOREX_ENABLED else
-                   {"stage": "off", "label": "Waiting for a free OANDA practice account (OANDA_API_TOKEN in .env)"})
     spy_now = (db.one("SELECT spy FROM equity WHERE spy IS NOT NULL ORDER BY ts DESC LIMIT 1") or {}).get("spy")
     return {"account": acct, "start": db.kv_get("start") or {}, "spy_now": spy_now, "desks": desks,
-            "crypto_stage": crypto_stage, "forex_stage": forex_stage, "positions": positions,
+            "crypto_stage": crypto_stage, "positions": positions,
             "trades": trades, "decisions": decisions, "debates": debates,
             "llm": llm.usage_summary(1), "llm_available": {t: llm.available(t) for t in ("smart", "fast")},
             "challenger": db.kv_get("challenger_scorecard") or {},
@@ -228,32 +211,8 @@ def dashboard():
             "lessons": db.query("SELECT ts, desk, grade, text FROM lessons ORDER BY id DESC LIMIT 15")}
 
 
-def forex_state():
-    """OANDA account numbers for the forex card (cached; empty when no OANDA account is set up)."""
-    if not config.FOREX_ENABLED:
-        return {}
-
-    def load():
-        from . import oanda
-        fb = oanda.ForexBroker()
-        acct = fb.account()
-        held = fb.ledger()
-        return {"connected": True, "budget": acct["equity"], "nav": acct["nav"], "upl": acct["upl"],
-                "exposure": fb.exposure(),
-                "prices": fb.bot_prices([p["symbol"] for p in held]) if held else {}}
-    return cached("forex", 30, load) or {"connected": False}
-
-
 # ---------------------------------------------------------------- chat
 DESK_RULES = {
-    "forex": "Forex desk rules: trades 6 major currency pairs (EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD, USD/CHF) "
-             "both ways - long or short - on hourly bars, in a separate free OANDA practice account (Alpaca has no "
-             "forex). Forex is open Sunday 5pm to Friday 5pm New York time: no new trades after Friday noon and "
-             "everything is closed by Friday 4pm, so nothing is held over the weekend. Same strict path as crypto: "
-             "validation + final exam on the newest data + a live shadow test before any real order, then every "
-             "check must agree (manager buy, Challenger proceed >=70% confidence, sentiment not negative). Every "
-             "order has its stop-loss and take-profit at OANDA. Budget FOREX_BUDGET (default $5,000), all positions "
-             "together at most 3x that budget, max 0.5% of the budget at risk per trade.",
     "crypto": "Crypto desk rules: trades Bitcoin, Ethereum, Solana and XRP 24/7 on hourly bars with the smallest "
               "budget in the firm (5% of equity). It only trades when its brain cleared a strict bar on unseen data "
               "AND the portfolio manager approves AND the Challenger says proceed with at least 70% confidence AND "

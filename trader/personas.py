@@ -22,13 +22,6 @@ AGENTS = {
     "crypto_trader": dict(name="Satoshi", role="Crypto trader", desk="crypto", kind="trader", color="#e66767",
                           badge="₿", bio="The most cautious bot in the studio: only trades crypto when every check "
                                         "agrees with high confidence, and happily sits out otherwise."),
-    "forex_researcher": dict(name="Sterling", role="Forex researcher", desk="forex", kind="researcher",
-                             color="#22a6c7", badge="💱",
-                             bio="Globetrotter who follows central banks, inflation reports and the US dollar from "
-                                 "Tokyo's open to New York's close."),
-    "forex_trader": dict(name="Pip", role="Forex trader", desk="forex", kind="trader", color="#22a6c7", badge="🌍",
-                         bio="Precise and patient. Trades currency pairs both ways, only when every check agrees, "
-                             "and is always flat before the weekend."),
     "challenger": dict(name="Devi", role="The Challenger (devil's advocate)", desk=None, kind="challenger",
                        color="#d55181", badge="⚖️",
                        bio="Friendly but relentless skeptic. Argues both sides of every trade before it is placed."),

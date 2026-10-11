@@ -44,12 +44,6 @@ ALPACA_PAPER = _b("ALPACA_PAPER", True)
 # Second lock for real money: BOTH ALPACA_PAPER=false AND this must be set.
 ALLOW_LIVE = _b("I_UNDERSTAND_LIVE_TRADING_RISK", False)
 
-# ---------------------------------------------------------------- forex (OANDA - Alpaca has no forex)
-OANDA_TOKEN = _s("OANDA_API_TOKEN")
-OANDA_ACCOUNT_ID = _s("OANDA_ACCOUNT_ID")          # optional: found automatically from the token
-OANDA_ENV = _s("OANDA_ENV", "practice").lower()     # "practice" = free demo money. "live" also needs the line below
-FOREX_ENABLED = bool(OANDA_TOKEN)
-
 # ---------------------------------------------------------------- folders
 DATA_DIR = ROOT / "data"
 DB_PATH = DATA_DIR / "market.db"
@@ -125,8 +119,7 @@ PROBATION_SIZE = _f("PROBATION_SIZE", PROFILE["probation"])
 PDT_EQUITY = 25_000.0
 PDT_BUFFER = _f("PDT_BUFFER", 0.02)          # need 2% above $25k before unlocking, so a dip doesn't trip the rule
 SMALL_ACCOUNT_MAX_POSITIONS = {"day": _i("SMALL_MAX_POSITIONS_DAY", 2), "swing": _i("SMALL_MAX_POSITIONS_SWING", 5),
-                               "long": _i("SMALL_MAX_POSITIONS_LONG", 6), "crypto": _i("MAX_POSITIONS_CRYPTO", 2),
-                               "forex": _i("MAX_POSITIONS_FOREX", 3)}
+                               "long": _i("SMALL_MAX_POSITIONS_LONG", 6), "crypto": _i("MAX_POSITIONS_CRYPTO", 2)}
 AUTO_REALLOCATE = _b("AUTO_REALLOCATE", True)   # manager moves 5%/week of capital toward the best desk
 REPORT_TIMES_ET = _s("REPORT_TIMES_ET", "00:30,08:30,16:30")
 
@@ -203,29 +196,11 @@ DESKS = {
         # then a final exam on the newest 20% that played no part in choosing the brain
         holdout_frac=0.2, test_frac=0.2, robust_blocks=4,
     ),
-    # Forex: hourly major currency pairs, 24 hours a day Sunday 5pm - Friday 5pm New York time. Every pair can be
-    # traded both ways: "EUR_USD_SHORT" is EUR/USD flipped upside down, so a short is just a long of the flip.
-    # Same strict path as crypto: validation + final exam + live shadow test before a single real order.
-    "forex": Desk(
-        name="forex", title="Forex", timeframe="1Hour",
-        sleeve=0.0, sleeve_min=0.0, sleeve_max=0.0,          # trades in its own OANDA account, not Alpaca money
-        max_positions=_i("MAX_POSITIONS_FOREX", 3), risk_per_trade=0.005, daily_loss_pct=0.02,
-        cost_per_side=0.00012, hold_range=(2, 24), stop_range=(1.0, 6.0), target_range=(1.0, 10.0),
-        min_stop=0.0015, path_len=24, path_step=1, decision_step=1,
-        history_days=_i("FOREX_HISTORY_DAYS", 2500), train_symbols=20, min_trades=90,
-        evolve_cooldown_min=60, periods_per_year=24 * 5 * 52, bench="EUR_USD", close_targets=True,
-        holdout_frac=0.2, test_frac=0.2, robust_blocks=4,
-    ),
 }
 # Only coins that trade nearly every hour on Alpaca. Others (DOGE, LTC, LINK, AVAX, ...) go 20-40% of hours
 # with no trades there, so their prices are unreliable for both testing and trading.
 CRYPTO_UNIVERSE = _list("CRYPTO_SYMBOLS", "BTC/USD,ETH/USD,SOL/USD,XRP/USD")
 CRYPTO_HISTORY_START = _s("CRYPTO_HISTORY_START", "2021-01-01")   # Alpaca's hourly crypto history begins here
-FOREX_PAIRS = _list("FOREX_PAIRS", "EUR_USD,GBP_USD,USD_JPY,AUD_USD,USD_CAD,USD_CHF")
-FOREX_UNIVERSE = [p for pair in FOREX_PAIRS for p in (pair, pair + "_SHORT")]
-FOREX_BUDGET = _f("FOREX_BUDGET", 5000.0)          # $ of the OANDA account the desk may use (capped at the account's value)
-FOREX_MAX_LEVERAGE = _f("FOREX_MAX_LEVERAGE", 3.0)  # all open forex positions together <= this x the budget
-STRICT_DESKS = ("crypto", "forex")                 # validation + final exam + live shadow test before trading
 CRYPTO_TRAIN_EVERY_MIN = _i("CRYPTO_TRAIN_EVERY_MIN", 15)   # how often the lab retrains crypto until it's cleared
 # Rush mode: until a crypto brain passes the strict backtest bar, train crypto nonstop and the other
 # desks every few minutes. Switches itself off (back to the normal pace) as soon as one passes.

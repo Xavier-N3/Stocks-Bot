@@ -27,7 +27,7 @@ def status(champ) -> str:
         return "untrained"
     h = champ.get("holdout", {})
     desk = config.DESKS[champ["id"].split("-")[0]]
-    if desk.name in config.STRICT_DESKS:
+    if desk.name == "crypto":
         # The strictest bar in the firm: a clear win on unseen data AND in training, THEN a passed forward
         # shadow test on live prices (see crypto_shadow.py). Until then it sits out entirely.
         from . import crypto_shadow

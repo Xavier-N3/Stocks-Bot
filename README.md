@@ -98,22 +98,11 @@ gets a protective stop order at Alpaca; Satoshi sells at the target or time limi
 in the Studio's top bar stops new crypto trades (open ones are still managed until they close). Other coins are
 excluded on purpose: on Alpaca they go 20-40% of hours without a single trade, so their prices are unreliable.
 
-## Forex desk (needs a free OANDA practice account)
+## Optional features (parked)
 
-Sterling (researcher) and Pip (trader) trade **EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD and USD/CHF, long or
-short**, on hourly bars from the desk in the lab's other corner. Alpaca has no forex, so this desk uses a separate
-**free OANDA practice account** (demo money):
-
-1. Sign up at oanda.com and open a free *Practice* (demo) account.
-2. In OANDA's web platform: *My Account → Manage API Access → Generate* a token.
-3. Put it in `.env` as `OANDA_API_TOKEN=...` and restart. The desk downloads ~7 years of hourly prices and starts training.
-
-Forex trades Sunday 5pm → Friday 5pm New York time (24/5, not 24/7). The desk opens nothing after Friday noon and
-closes everything by Friday 4pm, so it never holds through the weekend gap. It follows the same strict path as
-crypto: a brain must pass validation, a final exam on the newest data it was never chosen on, and a live shadow
-test (15+ paper trades over 7+ days, profitable, 50%+ wins) before a single real order - then every check must
-agree on every trade. Each order carries its stop-loss and take-profit at OANDA. Size: `FOREX_BUDGET` (default
-$5,000) with at most 0.5% of it at risk per trade and all positions together at most 3x the budget.
+The [`optional/`](optional/README.md) folder holds finished features that are **not active** and not loaded by
+the bot, each with instructions to switch it on later. Right now: a **forex desk** (needs a free OANDA account),
+parked until the account is big enough for forex to make a difference.
 
 ## Risk profile (`RISK_PROFILE` in `.env`)
 

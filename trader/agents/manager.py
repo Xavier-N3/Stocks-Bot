@@ -13,7 +13,7 @@ from ..marketdata import MarketData
 from ..timeutil import ET, hhmm, now_et
 from .base import Agent
 
-FOLLOWUP_HOURS = {"day": 6, "swing": 24 * 7, "long": 24 * 30, "crypto": 24, "forex": 24}
+FOLLOWUP_HOURS = {"day": 6, "swing": 24 * 7, "long": 24 * 30, "crypto": 24}
 
 
 def grade(r_mult):
@@ -71,7 +71,7 @@ class Manager(Agent):
     def _review_closed(self):
         for p in db.query("SELECT * FROM positions WHERE status='closed' AND reviewed=0 ORDER BY exit_time LIMIT 10"):
             desk = config.DESKS[p["desk"]]
-            tf = desk.timeframe
+            tf = {"day": "15Min", "crypto": "1Hour"}.get(p["desk"], "1Day")
             entry_t = datetime.fromisoformat(p["entry_time"])
             exit_t = datetime.fromisoformat(p["exit_time"])
             bench = config.DESKS[p["desk"]].bench
@@ -161,13 +161,7 @@ class Manager(Agent):
                              "AND action IN ('buy','veto','challenged') LIMIT 200", (d, cutoff))
         if not todo:
             return
-        stocks = sorted({t["symbol"] for t in todo if not t["symbol"].startswith(tuple(config.FOREX_PAIRS))})
-        snaps = self.md.snapshots(stocks) if stocks else {}
-        for t in todo:          # forex: latest stored hourly close (Alpaca has no currency quotes)
-            if t["symbol"] in config.FOREX_UNIVERSE and t["symbol"] not in snaps:
-                r = db.one("SELECT c FROM bars WHERE tf='1Hour' AND symbol=? ORDER BY ts DESC LIMIT 1", (t["symbol"],))
-                if r:
-                    snaps[t["symbol"]] = {"price": r["c"]}
+        snaps = self.md.snapshots(sorted({t["symbol"] for t in todo}))
         for t in todo:
             px = (snaps.get(t["symbol"]) or {}).get("price")
             if px and t["price"]:
@@ -211,7 +205,7 @@ class Manager(Agent):
         for d in config.DESKS:
             r = db.one("SELECT COUNT(*) n, SUM(pnl) p FROM positions WHERE desk=? AND status='closed' AND exit_time>=? "
                        "AND genome_id != 'legacy'", (d, since))
-            if (r["n"] or 0) >= 15 and sl.get(d, 0) > 0:      # forex has its own OANDA account, not a sleeve here
+            if (r["n"] or 0) >= 15:
                 perf[d] = (r["p"] or 0) / (acct["equity"] * sl[d])
         if len(perf) < 2:
             return

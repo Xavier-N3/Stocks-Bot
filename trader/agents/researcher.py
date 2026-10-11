@@ -13,21 +13,11 @@ from ..timeutil import ET, et_minutes, now_et
 from .base import Agent
 
 HORIZON = {"day": "the rest of today's trading session", "swing": "the next 1-4 weeks",
-           "long": "the next 6-12 months", "crypto": "the next 1-48 hours", "forex": "the next 2-24 hours"}
-TOP_N = {"day": 12, "swing": 15, "long": 25, "crypto": 13, "forex": 12}
-BRIEF_TTL_MIN = {"day": 45, "swing": 20 * 60, "long": 7 * 24 * 60, "crypto": 120, "forex": 120}
-REANALYZE_S = {"day": 3600, "swing": 6 * 3600, "long": 24 * 3600, "crypto": 3 * 3600, "forex": 3 * 3600}
-NEWS_HOURS = {"day": 20, "swing": 72, "long": 168, "crypto": 24, "forex": 24}
-CURRENCY_NAMES = {"EUR": "euro", "USD": "US dollar", "GBP": "British pound", "JPY": "Japanese yen",
-                  "AUD": "Australian dollar", "CAD": "Canadian dollar", "CHF": "Swiss franc", "NZD": "New Zealand dollar"}
-
-
-def fx_label(sym) -> str:
-    """'EUR_USD_SHORT' -> 'EUR/USD short (bets the euro falls vs the US dollar)'."""
-    short = sym.endswith("_SHORT")
-    base, quote = sym.replace("_SHORT", "").split("_")
-    b, q = CURRENCY_NAMES.get(base, base), CURRENCY_NAMES.get(quote, quote)
-    return f"{base}/{quote} {'short' if short else 'long'} (bets the {b} {'falls' if short else 'rises'} vs the {q})"
+           "long": "the next 6-12 months", "crypto": "the next 1-48 hours"}
+TOP_N = {"day": 12, "swing": 15, "long": 25, "crypto": 13}
+BRIEF_TTL_MIN = {"day": 45, "swing": 20 * 60, "long": 7 * 24 * 60, "crypto": 120}
+REANALYZE_S = {"day": 3600, "swing": 6 * 3600, "long": 24 * 3600, "crypto": 3 * 3600}
+NEWS_HOURS = {"day": 20, "swing": 72, "long": 168, "crypto": 24}
 COIN_NAMES = {"BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana", "XRP": "XRP Ripple", "DOGE": "Dogecoin",
               "LTC": "Litecoin", "LINK": "Chainlink", "AVAX": "Avalanche", "ADA": "Cardano", "DOT": "Polkadot",
               "BCH": "Bitcoin Cash", "UNI": "Uniswap", "AAVE": "Aave"}
@@ -76,7 +66,6 @@ class Researcher(Agent):
         self.seen = {}
         self.last_web = {}
         self.last_offhours = 0
-        self._fx = None
         self._wait = 60
 
     def wait_seconds(self):
@@ -85,8 +74,6 @@ class Researcher(Agent):
     def step(self):
         if self.desk.name == "crypto":
             return self._crypto()
-        if self.desk.name == "forex":
-            return self._forex()
         clock = self.broker.clock()
         if self.desk.name == "day":
             self._day(clock)
@@ -105,26 +92,6 @@ class Researcher(Agent):
         self.md.update_crypto(uni)
         market_context(90, self.name)
         fdf = features.live_features(self.desk, uni)
-        self._research(self._rank(fdf), True)
-
-    # ------------------------------------------------------------ forex desk (24/5, OANDA)
-    def _forex(self):
-        from .. import oanda
-        if not config.FOREX_ENABLED:
-            self._wait = 1800
-            self.activity("Waiting for a free OANDA practice account (add OANDA_API_TOKEN to .env)")
-            return
-        self._wait = 600
-        if self._fx is None:
-            self._fx = oanda.Oanda()
-        self.activity(f"Updating hourly prices for {len(config.FOREX_PAIRS)} currency pairs")
-        oanda.update_forex(self._fx)
-        if not oanda.market_open():
-            self._wait = 1800
-            self.activity("Forex market is closed for the weekend (reopens Sunday 5pm New York time)")
-            return
-        market_context(90, self.name)
-        fdf = features.live_features(self.desk, config.FOREX_UNIVERSE)
         self._research(self._rank(fdf), True)
 
     # ------------------------------------------------------------ day desk
@@ -206,19 +173,15 @@ class Researcher(Agent):
                 scored["quant"] = scored["day_ret"].abs().fillna(0) + scored["gap"].abs().fillna(0)
             elif self.desk.name == "crypto":
                 scored["quant"] = scored["r168"].fillna(0) + scored["d_ema168"].fillna(0)
-            elif self.desk.name == "forex":
-                scored["quant"] = scored["r120"].fillna(0) + scored["d_ema120"].fillna(0)
             else:
                 scored["quant"] = scored["r60"].fillna(0) + scored["d_sma200"].fillna(0)
             scored = scored.sort_values("quant", ascending=False)
         out = []
         for sym, r in scored.head(TOP_N[self.desk.name]).iterrows():
-            nums = {"price": round(float(r["c"]), 6 if self.desk.name == "forex" else 2)}
+            nums = {"price": round(float(r["c"]), 2)}
             keys = (["day_ret", "gap", "d_vwap", "vratio", "rsi"] if self.desk.name == "day"
                     else ["r1", "r4", "r24", "r168", "d_ema168", "d_ema720", "rsi", "atr", "vol_ratio", "rs24", "rs168"]
                     if self.desk.name == "crypto"
-                    else ["r1", "r4", "r24", "r120", "d_ema120", "d_ema480", "rsi", "atr", "vol_ratio", "usd_r24"]
-                    if self.desk.name == "forex"
                     else ["r5", "r20", "r60", "mom12_1", "d_sma200", "d_hi252", "rsi", "atr"])
             for k in keys:
                 v = r.get(k)
@@ -247,16 +210,11 @@ class Researcher(Agent):
         d = self.desk.name
         syms = [s for s, _, _ in ranked]
         self.activity(f"Reading news on {', '.join(syms[:6])}{'...' if len(syms) > 6 else ''}")
-        fx = d == "forex"
-        news_sym = (lambda s: s.replace("_SHORT", "")) if fx else (lambda s: s)   # a pair's long & short share news
-        if not fx:                                  # Alpaca's news feed covers stocks and crypto, not currencies
-            self.md.fetch_news(syms, NEWS_HOURS[d])
+        self.md.fetch_news(syms, NEWS_HOURS[d])
         web_every = 1800 if d in ("day", "crypto") else 6 * 3600
-        for s in (sorted({news_sym(x) for x in syms}) if fx else syms[:8]):
+        for s in syms[:8]:
             if time.time() - self.last_web.get(s, 0) > web_every:
-                if fx:
-                    web.store_web_news(s, f"{s.replace('_', '/')} forex outlook")
-                elif "/" in s:     # crypto: search the coin's name, not "BTC/USD stock"
+                if "/" in s:     # crypto: search the coin's name, not "BTC/USD stock"
                     coin = COIN_NAMES.get(s.split("/")[0], s.split("/")[0])
                     web.store_web_news(s, f"{coin} crypto price")
                 else:
@@ -266,7 +224,7 @@ class Researcher(Agent):
         todo, packs = [], {}
         for sym, q, nums in ranked:
             heads = db.query("SELECT ts, source, headline FROM news WHERE symbol=? AND ts>=? ORDER BY ts DESC LIMIT 6",
-                             (news_sym(sym), since))
+                             (sym, since))
             h = hashlib.md5(json.dumps([x["headline"] for x in heads]).encode()).hexdigest()
             packs[sym] = (q, nums, heads)
             prev = self.seen.get(sym)
@@ -298,7 +256,7 @@ class Researcher(Agent):
         blocks = []
         for s in syms:
             q, nums, heads = packs[s]
-            info = {"name": fx_label(s), "sector": "currencies"} if d == "forex" else universe.info(s)
+            info = universe.info(s)
             line = f"{s} ({info.get('name', '')}, {info.get('sector', '')}) quant_score={q:+.3f} " + \
                    " ".join(f"{k}={v}" for k, v in nums.items())
             if d == "long":
@@ -315,11 +273,7 @@ class Researcher(Agent):
                 "Numbers: returns are fractions (0.02 = +2%); rsi is scaled -1..1; d_* = distance from that level."
                 + (" Crypto: rN = return over the last N hours; rs* = vs Bitcoin; funding_apr_pct = perpetual-futures "
                    "funding (large + means crowded longs, a squeeze risk; - means crowded shorts); fear_greed_0_100 "
-                   "= market mood (extremes often mean-revert)." if d == "crypto" else "")
-                + (" Forex: each pair appears as a long and a SHORT twin (the short's price is flipped, so its "
-                   "returns are the reverse); judge each twin on its own direction. rN = return over N hours; "
-                   "usd_r24 = US dollar strength over 24h. Watch for central-bank meetings, CPI/jobs data and "
-                   "intervention risk inside the holding period." if d == "forex" else "") + "\n\n"
+                   "= market mood (extremes often mean-revert)." if d == "crypto" else "") + "\n\n"
                 + "\n\n".join(blocks) +
                 '\n\nFor EVERY stock return: {"stocks": [{"symbol": "X", "sentiment": -1..1, "confidence": 0..1, '
                 '"catalysts": "short", "risks": "short", "summary": "one sentence"}]}')
