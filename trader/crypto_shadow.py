@@ -1,6 +1,7 @@
 """Crypto clearance: the path a crypto brain must walk before it may trade.
 
-  1. training    - the lab keeps evolving brains (hourly) until one passes the strict backtest bar
+  1. training    - the lab keeps evolving brains until one passes the strict backtest bar: validation
+                   (used to pick champions) AND a final exam on the newest data (never used for picking)
   2. shadow test - that brain "trades" on paper inside the bot, on LIVE prices that didn't exist when it was
                    chosen (so it can't have been overfit to them). Needs >= 15 trades over >= 7 days, net
                    profitable, win rate >= 50%.
@@ -18,13 +19,25 @@ SHADOW_MIN_WINRATE = config._f("CRYPTO_SHADOW_MIN_WINRATE", 0.5)
 HALF_SIZE_TRADES = 10
 
 
-def backtest_ok(champ) -> bool:
-    """The strict backtest bar: a clear win on unseen data AND in training."""
+def val_ok(champ) -> bool:
+    """Bar 1 (validation): a clear win on unseen data AND in training. The lab may pick brains by this."""
     if not champ:
         return False
     h, t = champ.get("holdout", {}), champ.get("train", {})
     return (h.get("trades", 0) >= 30 and h.get("sharpe", 0) >= 1.5 and h.get("winrate", 0) >= 0.55
             and h.get("total", 0) > 0 and h.get("maxdd", 1) <= 0.15 and t.get("sharpe", 0) >= 1.0)
+
+
+def test_ok(champ) -> bool:
+    """Bar 2 (final exam): the newest slice of history, which played no part in choosing the brain."""
+    x = (champ or {}).get("test") or {}
+    return (x.get("trades", 0) >= 20 and x.get("sharpe", 0) >= 1.0 and x.get("total", 0) > 0
+            and x.get("maxdd", 1) <= 0.15)
+
+
+def backtest_ok(champ) -> bool:
+    """The strict backtest bar: both of the above."""
+    return val_ok(champ) and test_ok(champ)
 
 
 def _since(gid):
@@ -53,8 +66,9 @@ def cleared(champ) -> bool:
 
 def stage(champ) -> dict:
     if not champ or not backtest_ok(champ):
-        return {"stage": "training", "label": "Training - no brain has passed the strict backtest bar yet",
-                "genome_id": champ["id"] if champ else None}
+        why = ("the best brain passed validation but failed the final exam on the newest data" if val_ok(champ)
+               else "no brain has passed the strict backtest bar yet")
+        return {"stage": "training", "label": f"Training - {why}", "genome_id": champ["id"] if champ else None}
     s = shadow_stats(champ["id"])
     if cleared(champ):
         real = db.one("SELECT COUNT(*) n FROM positions WHERE desk='crypto' AND genome_id=? AND status='closed'",

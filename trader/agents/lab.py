@@ -111,18 +111,25 @@ class Lab(Agent):
             return hit[1]
         since = (datetime.now(timezone.utc) - timedelta(days=desk.history_days)).isoformat()
         bars = db.load_bars(self._symbols(name), desk.timeframe, since)
+        if name == "crypto":
+            from .. import macro
+            macro.update_fng()
         norm = db.kv_get(f"norm:{name}")
+        if norm is not None and len(norm[0]) != len(features.feature_names(name)):
+            norm = None           # the desk's inputs changed: measure the scaling afresh
         start_dates = None
         if name in ("swing", "long"):   # survivorship guard: only count a stock from the day it joined the S&P 500
             start_dates = {s: v["added"] for s, v in universe.sp500().items() if v.get("added")}
-        ds = features.build_dataset(desk, bars, norm=norm, start_dates=start_dates)
+        ds = features.build_dataset(desk, bars, holdout_frac=desk.holdout_frac, norm=norm, start_dates=start_dates,
+                                    test_frac=desk.test_frac)
         if ds is None:
             return None
         if norm is None:      # freeze feature scaling so every generation's brains stay comparable
             db.kv_set(f"norm:{name}", [ds["mu"].tolist(), ds["sd"].tolist()])
         self.cache[name] = (time.time(), ds)
-        self.log.info("[%s] training data: %d samples, %d symbols, %d bars (holdout = last %d bars)",
-                      name, len(ds["X"]), len(ds["symbols"]), ds["n_dates"], ds["n_dates"] - ds["split"])
+        self.log.info("[%s] training data: %d samples, %d symbols, %d bars (holdout = %d bars, final exam = %d bars)",
+                      name, len(ds["X"]), len(ds["symbols"]), ds["n_dates"], ds["split2"] - ds["split"],
+                      ds["n_dates"] - ds["split2"])
         return ds
 
     def _evolve(self, name):
@@ -168,10 +175,11 @@ class Lab(Agent):
         promote = champ_h is None or (best["holdout"]["fitness"] > champ_h["fitness"] + margin
                                       and best["holdout"]["trades"] >= 5)
         if name == "crypto":
-            # a brain that clears the full backtest bar always replaces a champion that doesn't
+            # A brain that clears the validation bar replaces a champion that doesn't. Picking is done on
+            # validation ONLY - the final exam is taken by the chosen champion alone, so it stays honest.
             from .. import crypto_shadow
-            passing = [c for c in cands if crypto_shadow.backtest_ok(c)]
-            if passing and not (champ and crypto_shadow.backtest_ok(champ)):
+            passing = [c for c in cands if crypto_shadow.val_ok(c)]
+            if passing and not (champ and crypto_shadow.val_ok(champ)):
                 best, promote = passing[0], True
         if boost:
             db.kv_set("crypto_stall", 0 if promote else (db.kv_get("crypto_stall") or 0) + 1)
@@ -181,15 +189,22 @@ class Lab(Agent):
             db.execute("UPDATE genomes SET role='retired' WHERE desk=? AND role='champion'", (name,))
             data = {"vec": np.round(best["vec"], 6).tolist(), "feats": ds["feats"],
                     "mu": ds["mu"].tolist(), "sd": ds["sd"].tolist(), "train": best["train"],
-                    "holdout": best["holdout"], "holdout_dates": [ds["dates"][ds["split"]], ds["dates"][-1]],
+                    "holdout": best["holdout"], "holdout_dates": [ds["dates"][ds["split"]], ds["dates"][ds["split2"] - 1]],
                     "params": {k: v for k, v in evolution.decode(best["vec"], len(ds["feats"]), desk).items()
                                if k in ("thr", "stop", "target", "hold")}}
+            if ds["split2"] < ds["n_dates"]:      # final exam on the newest slice, taken once, by the champion only
+                data["test"] = evolution.simulate(best["vec"], ds, desk, "test")
+                data["test_dates"] = [ds["dates"][ds["split2"]], ds["dates"][-1]]
             db.execute("INSERT INTO genomes VALUES (?,?,?,?,?,?,?,?)",
                        (gid, name, db.now_iso(), "champion", best["train"]["fitness"], best["holdout"]["fitness"],
                         best["holdout"]["trades"], json.dumps(data)))
             note = (f"new champion {gid}: unseen-data sharpe {best['holdout']['sharpe']}, "
                     f"return {best['holdout']['total'] * 100:+.1f}% over {best['holdout']['trades']} trades "
                     f"(old champion fitness {champ_h['fitness'] if champ_h else 'n/a'})")
+            if "test" in data:
+                x = data["test"]
+                note += (f"; final exam on the newest data: sharpe {x['sharpe']}, {x['total'] * 100:+.1f}% over "
+                         f"{x['trades']} trades")
             db.event(self.name, f"[{name}] {note}")
         else:
             db.execute("UPDATE genomes SET holdout_fit=? WHERE id=?", (champ_h["fitness"], champ["id"]))

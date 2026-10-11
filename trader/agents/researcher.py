@@ -171,6 +171,8 @@ class Researcher(Agent):
             scored = fdf.copy()
             if self.desk.name == "day":
                 scored["quant"] = scored["day_ret"].abs().fillna(0) + scored["gap"].abs().fillna(0)
+            elif self.desk.name == "crypto":
+                scored["quant"] = scored["r168"].fillna(0) + scored["d_ema168"].fillna(0)
             else:
                 scored["quant"] = scored["r60"].fillna(0) + scored["d_sma200"].fillna(0)
             scored = scored.sort_values("quant", ascending=False)
@@ -178,13 +180,28 @@ class Researcher(Agent):
         for sym, r in scored.head(TOP_N[self.desk.name]).iterrows():
             nums = {"price": round(float(r["c"]), 2)}
             keys = (["day_ret", "gap", "d_vwap", "vratio", "rsi"] if self.desk.name == "day"
-                    else ["r1", "r5", "r20", "r60", "d_sma200", "rsi", "atr", "rs60"] if self.desk.name == "crypto"
+                    else ["r1", "r4", "r24", "r168", "d_ema168", "d_ema720", "rsi", "atr", "vol_ratio", "rs24", "rs168"]
+                    if self.desk.name == "crypto"
                     else ["r5", "r20", "r60", "mom12_1", "d_sma200", "d_hi252", "rsi", "atr"])
             for k in keys:
                 v = r.get(k)
                 if v == v and v is not None:
                     nums[k] = round(float(v), 4)
+            if self.desk.name == "crypto":
+                nums.update(self._crypto_context(sym))
             out.append((sym, float(r["quant"]), nums))
+        return out
+
+    def _crypto_context(self, sym):
+        """Positioning & mood for the AI analyst (not brain inputs): perp funding rate and Fear & Greed."""
+        from .. import macro
+        out = {}
+        rate = macro.funding_now().get(sym.split("/")[0])
+        if rate is not None:
+            out["funding_apr_pct"] = round(rate * 24 * 365 * 100, 1)   # hourly rate -> yearly %, + = longs crowded
+        fng = macro.latest_fng()
+        if fng is not None:
+            out["fear_greed_0_100"] = int(fng)
         return out
 
     def _research(self, ranked, live):
@@ -253,7 +270,10 @@ class Researcher(Agent):
                   "headlines are noise or already priced in. Flag concrete risks (earnings date, lawsuits, share "
                   "offerings, guidance cuts, halts). Reply with JSON only.")
         user = (f"Market backdrop: {ctx.get('summary', 'n/a')} (risk {ctx.get('risk', '?')}/5)\n\n"
-                "Numbers: returns are fractions (0.02 = +2%); rsi is scaled -1..1; d_* = distance from that level.\n\n"
+                "Numbers: returns are fractions (0.02 = +2%); rsi is scaled -1..1; d_* = distance from that level."
+                + (" Crypto: rN = return over the last N hours; rs* = vs Bitcoin; funding_apr_pct = perpetual-futures "
+                   "funding (large + means crowded longs, a squeeze risk; - means crowded shorts); fear_greed_0_100 "
+                   "= market mood (extremes often mean-revert)." if d == "crypto" else "") + "\n\n"
                 + "\n\n".join(blocks) +
                 '\n\nFor EVERY stock return: {"stocks": [{"symbol": "X", "sentiment": -1..1, "confidence": 0..1, '
                 '"catalysts": "short", "risks": "short", "summary": "one sentence"}]}')

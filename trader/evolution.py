@@ -61,7 +61,8 @@ def simulate(vec, ds, desk, part="train", trades_out=None):
     n_feats = len(ds["feats"])
     dec = decode(vec, n_feats, desk)
     D = ds["date"]
-    d0, d1 = (0, ds["split"]) if part == "train" else (ds["split"], ds["n_dates"])
+    split2 = ds.get("split2", ds["n_dates"])
+    d0, d1 = {"train": (0, ds["split"]), "holdout": (ds["split"], split2), "test": (split2, ds["n_dates"])}[part]
     cache = ds.setdefault("_cache", {})            # same rows/features for every brain: slice them once
     if part not in cache:
         r0 = np.nonzero((D >= d0) & (D < d1))[0]
@@ -155,9 +156,16 @@ def simulate(vec, ds, desk, part="train", trades_out=None):
     eq = np.cumsum(pnl)
     maxdd = float(np.max(np.maximum.accumulate(np.r_[0, eq]) - np.r_[0, eq]))
     sd = pnl.std()
-    sharpe = float(pnl.mean() / sd * math.sqrt(desk.periods_per_year)) if sd > 0 else 0.0
+    ann = math.sqrt(desk.periods_per_year)
+    sharpe = float(pnl.mean() / sd * ann) if sd > 0 else 0.0
     need = desk.min_trades * (1.0 if part == "train" else 0.35)
-    fitness = sharpe * min(1.0, n / need) - 2.0 * max(0.0, maxdd - 0.25)
+    edge = sharpe
+    if part == "train" and desk.robust_blocks > 1:
+        # consistency: average sharpe across eras, minus half their spread - a brain that made a fortune in one
+        # stretch and lost in the others scores worse than one that was steadily decent (sitting out counts as 0)
+        sh = [float(b.mean() / b.std() * ann) if b.std() > 0 else 0.0 for b in np.array_split(pnl, desk.robust_blocks)]
+        edge = float(np.mean(sh) - 0.5 * np.std(sh))
+    fitness = edge * min(1.0, n / need) - 2.0 * max(0.0, maxdd - 0.25)
     if n < 5:
         fitness = -2.0 + 0.01 * n
     if trades_out is not None:

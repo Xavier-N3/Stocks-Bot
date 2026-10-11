@@ -150,6 +150,9 @@ class Desk:
     periods_per_year: int = 252   # bars per year, for annualizing results (crypto: hourly, 24/7)
     bench: str = "SPY"            # the "market" each stock is compared against
     close_targets: bool = False   # True: a profit target only counts if a bar CLOSES above it (no spike fills)
+    holdout_frac: float = 0.25    # most recent share of history kept unseen during training (used to pick champions)
+    test_frac: float = 0.0        # an even later share, never used for picking: the final exam for a new champion
+    robust_blocks: int = 1        # >1: training score = consistency across this many eras, not one lucky stretch
 
 
 DESKS = {
@@ -187,13 +190,17 @@ DESKS = {
         max_positions=_i("MAX_POSITIONS_CRYPTO", 2), risk_per_trade=0.004, daily_loss_pct=0.05,
         cost_per_side=0.0030, hold_range=(2, 48), stop_range=(1.0, 6.0), target_range=(1.0, 10.0),
         min_stop=0.012, path_len=48, path_step=1, decision_step=1,
-        history_days=_i("CRYPTO_HISTORY_DAYS", 1000), train_symbols=20, min_trades=90,   # 90 -> ~30 on unseen data, the clearance bar
+        history_days=_i("CRYPTO_HISTORY_DAYS", 2200), train_symbols=20, min_trades=90,   # 90 -> ~30 on unseen data, the clearance bar
         evolve_cooldown_min=60, periods_per_year=24 * 365, bench="BTC/USD", close_targets=True,
+        # learn on the oldest 60% (2021 boom, 2022 crash, 2023-24), pick champions on the next 20%,
+        # then a final exam on the newest 20% that played no part in choosing the brain
+        holdout_frac=0.2, test_frac=0.2, robust_blocks=4,
     ),
 }
 # Only coins that trade nearly every hour on Alpaca. Others (DOGE, LTC, LINK, AVAX, ...) go 20-40% of hours
 # with no trades there, so their prices are unreliable for both testing and trading.
 CRYPTO_UNIVERSE = _list("CRYPTO_SYMBOLS", "BTC/USD,ETH/USD,SOL/USD,XRP/USD")
+CRYPTO_HISTORY_START = _s("CRYPTO_HISTORY_START", "2021-01-01")   # Alpaca's hourly crypto history begins here
 CRYPTO_TRAIN_EVERY_MIN = _i("CRYPTO_TRAIN_EVERY_MIN", 15)   # how often the lab retrains crypto until it's cleared
 # Rush mode: until a crypto brain passes the strict backtest bar, train crypto nonstop and the other
 # desks every few minutes. Switches itself off (back to the normal pace) as soon as one passes.

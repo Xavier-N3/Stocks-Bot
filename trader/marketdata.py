@@ -137,12 +137,23 @@ class MarketData:
             new = [s for s in symbols if s not in last]
             old = [s for s in symbols if s in last]
             n = 0
-            for group, start in ((new, now - timedelta(days=days)), (old, now - timedelta(days=3))):
+            jobs = [(new, now - timedelta(days=days), None), (old, now - timedelta(days=3), None)]
+            # one-time backfill: older history for coins we already have (asked for once per coin and start date)
+            want = max(now - timedelta(days=days), datetime.fromisoformat(config.CRYPTO_HISTORY_START + "T00:00:00+00:00"))
+            first = {r["symbol"]: r["m"] for r in db.query("SELECT symbol, MIN(ts) m FROM bars WHERE tf='1Hour' GROUP BY symbol")}
+            for s in old:
+                key = f"crypto_backfill:{s}"
+                if first.get(s) and first[s] > (want + timedelta(days=2)).isoformat() and db.kv_get(key) != want.isoformat():
+                    jobs.append(([s], want, datetime.fromisoformat(first[s])))
+                    db.kv_set(key, want.isoformat())
+            for group, start, end in jobs:
                 if not group:
                     continue
+                if end is not None:
+                    L.info("Backfilling hourly %s history from %s", group[0], start.date())
                 try:
                     df = _retry(lambda: self.crypto.get_crypto_bars(
-                        CryptoBarsRequest(symbol_or_symbols=group, timeframe=TF["1Hour"], start=start)).df)
+                        CryptoBarsRequest(symbol_or_symbols=group, timeframe=TF["1Hour"], start=start, end=end)).df)
                 except Exception as e:
                     L.warning("crypto bars failed: %s", e)
                     continue

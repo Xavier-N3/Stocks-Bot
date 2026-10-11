@@ -42,7 +42,9 @@ def score_live(desk_name, champ, fdf: pd.DataFrame) -> pd.DataFrame:
     """Adds score / threshold / stop_pct / target_pct / hold columns."""
     desk = config.DESKS[desk_name]
     feats = champ["feats"]
-    ok = fdf[feats + ["atr"]].replace([np.inf, -np.inf], np.nan).notna().all(axis=1) & (fdf["atr"] > 0)
+    if any(f not in fdf.columns for f in feats):    # a brain trained on older inputs: it can't read today's data
+        return fdf.iloc[0:0]
+    ok =fdf[feats + ["atr"]].replace([np.inf, -np.inf], np.nan).notna().all(axis=1) & (fdf["atr"] > 0)
     f = fdf[ok].copy()
     if f.empty:
         return f

@@ -4,7 +4,7 @@ the bots learn on history is exactly what they see live."""
 import numpy as np
 import pandas as pd
 
-from . import db
+from . import config, db
 from .timeutil import ET, now_et
 
 DAILY_FEATS = ["r1", "r5", "r20", "r60", "r120", "mom12_1", "d_sma20", "d_sma50", "d_sma200",
@@ -14,7 +14,7 @@ INTRA_FEATS = ["day_ret", "gap", "r1", "r4", "d_vwap", "rsi", "atr", "vratio", "
 
 
 def feature_names(desk_name):
-    return INTRA_FEATS if desk_name == "day" else DAILY_FEATS
+    return INTRA_FEATS if desk_name == "day" else CRYPTO_FEATS if desk_name == "crypto" else DAILY_FEATS
 
 
 def _rsi(c, n=14):
@@ -114,6 +114,89 @@ def intraday_features(bars: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ---------------------------------------------------------------- crypto (hourly, 24/7)
+# Everything here is known at the moment the hourly bar closes - nothing peeks at the future:
+#   price action over 1h..30d, trend, volatility regime, volume, how the coin moves vs Bitcoin,
+#   how the whole crypto market is moving, time of day / week, Fear & Greed (lagged a full day),
+#   and the US stock market's last completed session.
+CRYPTO_FEATS = ["r1", "r4", "r12", "r24", "r72", "r168", "d_ema24", "d_ema72", "d_ema168", "d_ema720",
+                "rsi", "atr", "vol24", "vol_ratio", "bbpos", "d_hi168", "d_lo168", "d_hi720", "vratio",
+                "btc_r4", "btc_r24", "btc_r168", "btc_d_ema168", "rs24", "rs168", "breadth24",
+                "hod_sin", "hod_cos", "dow_sin", "dow_cos", "fng", "fng_chg7", "spy_r1d", "spy_r5d"]
+GAP_HOURS = 6   # a hole longer than this in a coin's history starts a new, separate stretch
+
+
+def _crypto_one(g):
+    c, h, l, v = g["c"], g["h"], g["l"], g["v"]
+    f = pd.DataFrame(index=g.index)
+    for n in (1, 4, 12, 24, 72, 168):
+        f[f"r{n}"] = c / c.shift(n) - 1
+    for n in (24, 72, 168, 720):
+        f[f"d_ema{n}"] = c / c.ewm(span=n, adjust=False, min_periods=min(n, 168)).mean() - 1
+    f["rsi"] = _rsi(c)
+    f["atr"] = _atr_pct(h, l, c)
+    f["vol24"] = f["r1"].rolling(24).std()
+    f["vol_ratio"] = np.log(f["vol24"] / f["r1"].rolling(168).std())
+    sd = c.rolling(24).std()
+    f["bbpos"] = (c - c.rolling(24).mean()) / (2 * sd.replace(0, np.nan))
+    f["d_hi168"] = c / h.rolling(168).max() - 1
+    f["d_lo168"] = c / l.rolling(168).min() - 1
+    f["d_hi720"] = c / h.rolling(720, min_periods=168).max() - 1
+    # ratio to its own recent average (exchanges' reported volume levels changed over the years)
+    f["vratio"] = np.log((v / v.rolling(24).mean().replace(0, np.nan)).clip(0.05, 20))
+    return f
+
+
+def crypto_features(bars: pd.DataFrame, bench: str = "BTC/USD") -> pd.DataFrame:
+    """bars: hourly symbol, ts, o, h, l, c, v for several coins (must include the benchmark)."""
+    from . import macro
+    parts = []
+    for sym, g in bars.groupby("symbol", sort=False):
+        g = g.sort_values("ts").reset_index(drop=True)
+        seg = (g["ts"].diff() > pd.Timedelta(hours=GAP_HOURS)).cumsum()
+        for k, gg in g.groupby(seg, sort=False):
+            gg = gg.reset_index(drop=True)
+            out = pd.concat([gg, _crypto_one(gg)], axis=1)
+            out["seg"] = f"{sym}#{k}"
+            parts.append(out)
+    df = pd.concat(parts, ignore_index=True)
+    btc = df[df.symbol == bench][["ts", "r4", "r24", "r168", "d_ema168"]].drop_duplicates("ts").rename(
+        columns={"r4": "btc_r4", "r24": "btc_r24", "r168": "btc_r168", "d_ema168": "btc_d_ema168"})
+    df = df.merge(btc, on="ts", how="left")
+    df["rs24"] = df["r24"] - df["btc_r24"]
+    df["rs168"] = df["r168"] - df["btc_r168"]
+    df["breadth24"] = df.groupby("ts")["r24"].transform("mean")
+    t = df["ts"] + pd.Timedelta(hours=1)                                  # the moment the bar closes
+    hod, dow = t.dt.hour + t.dt.minute / 60, t.dt.dayofweek + t.dt.hour / 24
+    df["hod_sin"], df["hod_cos"] = np.sin(2 * np.pi * hod / 24), np.cos(2 * np.pi * hod / 24)
+    df["dow_sin"], df["dow_cos"] = np.sin(2 * np.pi * dow / 7), np.cos(2 * np.pi * dow / 7)
+    df["_t"] = t.astype("datetime64[ns, UTC]")
+    df = df.sort_values("_t")
+    # Fear & Greed: a day's reading counts only from the END of that day (+1 day), to be safe about when it's published
+    fng = macro.fng_series()
+    if not fng.empty:
+        fng = fng.sort_values("ts")
+        fng["fng"] = fng["value"] / 100 - 0.5
+        fng["fng_chg7"] = fng["fng"] - fng["fng"].shift(7)
+        fng["_t"] = (fng["ts"] + pd.Timedelta(days=1)).astype("datetime64[ns, UTC]")
+        df = pd.merge_asof(df, fng[["_t", "fng", "fng_chg7"]], on="_t", direction="backward")
+    else:
+        df["fng"], df["fng_chg7"] = np.nan, np.nan
+    # US stocks: SPY's last fully completed session (a session counts from the following midnight New York time)
+    spy = db.load_bars(["SPY"], "1Day", (df["ts"].min() - pd.Timedelta(days=15)).isoformat())
+    if not spy.empty:
+        spy = spy.sort_values("ts")
+        spy["spy_r1d"] = spy["c"] / spy["c"].shift(1) - 1
+        spy["spy_r5d"] = spy["c"] / spy["c"].shift(5) - 1
+        day = spy["ts"].dt.tz_convert(ET).dt.normalize()
+        spy["_t"] = (day + pd.Timedelta(days=1)).dt.tz_convert("UTC").astype("datetime64[ns, UTC]")
+        df = pd.merge_asof(df, spy[["_t", "spy_r1d", "spy_r5d"]].dropna(), on="_t", direction="backward")
+    else:
+        df["spy_r1d"], df["spy_r5d"] = np.nan, np.nan
+    df["date"] = df["ts"]
+    return df.drop(columns=["_t"]).sort_values(["symbol", "ts"]).reset_index(drop=True)
+
+
 # ---------------------------------------------------------------- training dataset
 def _paths(sub: pd.DataFrame, L: int, step: int, same_day: bool):
     """Future price path after each bar, relative to the NEXT bar's open (the
@@ -147,7 +230,7 @@ def _paths(sub: pd.DataFrame, L: int, step: int, same_day: bool):
     return valid & (entry > 0), hi, lo, cl
 
 
-def build_dataset(desk, bars: pd.DataFrame, holdout_frac=0.25, norm=None, start_dates=None) -> dict:
+def build_dataset(desk, bars: pd.DataFrame, holdout_frac=0.25, norm=None, start_dates=None, test_frac=0.0) -> dict:
     """Everything the simulator needs to replay history for one desk.
     start_dates {symbol: "YYYY-MM-DD"}: ignore a stock's history before that day
     (used for S&P 500 join dates, so the lab can't "invest" in a company before
@@ -160,7 +243,7 @@ def build_dataset(desk, bars: pd.DataFrame, holdout_frac=0.25, norm=None, start_
     elif desk.timeframe == "1Hour":
         now = pd.Timestamp.now(tz="UTC")
         bars = bars[bars["ts"] + pd.Timedelta(hours=1) <= now]           # completed hours only
-        df = daily_features(bars, desk.bench, hourly=True)
+        df = crypto_features(bars, desk.bench)
     else:
         today = now_et().date()
         bars = bars[bars["ts"].dt.tz_convert(ET).dt.date < today]   # completed days only
@@ -170,7 +253,7 @@ def build_dataset(desk, bars: pd.DataFrame, holdout_frac=0.25, norm=None, start_
     dates = np.array(sorted(df["date"].unique()))
     date_pos = {d: i for i, d in enumerate(dates)}
     X, ATR, HI, LO, CL, D, S, SYMS, T = [], [], [], [], [], [], [], [], []
-    for _, sub in df.groupby("symbol", sort=False):
+    for _, sub in df.groupby("seg" if hourly else "symbol", sort=False):     # crypto: each unbroken stretch on its own
         sub = sub.reset_index(drop=True)
         valid, hi, lo, cl = _paths(sub, desk.path_len, desk.path_step, intraday)
         di = sub["date"].map(date_pos).to_numpy()
@@ -195,7 +278,8 @@ def build_dataset(desk, bars: pd.DataFrame, holdout_frac=0.25, norm=None, start_
         return None
     X = np.concatenate(X)
     D = np.concatenate(D).astype(np.int32)
-    split = int(len(dates) * (1 - holdout_frac))
+    split = int(len(dates) * (1 - holdout_frac - test_frac))
+    split2 = int(len(dates) * (1 - test_frac))
     train = D < split
     if norm is not None and len(norm[0]) == X.shape[1]:
         mu, sd = np.asarray(norm[0], np.float32), np.asarray(norm[1], np.float32)
@@ -208,7 +292,7 @@ def build_dataset(desk, bars: pd.DataFrame, holdout_frac=0.25, norm=None, start_
         "atr": np.concatenate(ATR), "hi": np.concatenate(HI), "lo": np.concatenate(LO),
         "cl": np.concatenate(CL), "date": D, "tod": np.concatenate(T), "sym": np.concatenate(S),
         "n_dates": len(dates),
-        "split": split, "dates": [str(d) for d in dates], "symbols": SYMS,
+        "split": split, "split2": split2, "dates": [str(d) for d in dates], "symbols": SYMS,
     }
 
 
@@ -217,12 +301,12 @@ def live_features(desk, symbols, today_only=True) -> pd.DataFrame:
     """Latest feature row per symbol from completed bars in the database."""
     syms = sorted(set(symbols) | {desk.bench})
     if desk.timeframe == "1Hour":
-        since = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=20)).isoformat()
-        bars = db.load_bars(syms, "1Hour", since)
+        since = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=90)).isoformat()   # enough for the 30-day averages
+        bars = db.load_bars(sorted(set(syms) | set(config.CRYPTO_UNIVERSE)), "1Hour", since)   # all coins: market breadth
         if bars.empty:
             return pd.DataFrame()
         bars = bars[bars["ts"] + pd.Timedelta(hours=1) <= pd.Timestamp.now(tz="UTC")]
-        df = daily_features(bars, desk.bench, hourly=True)
+        df = crypto_features(bars, desk.bench)
     elif desk.name == "day":
         since = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=12)).isoformat()
         bars = db.load_bars(syms, "15Min", since)
