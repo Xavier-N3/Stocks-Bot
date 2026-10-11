@@ -98,12 +98,6 @@ gets a protective stop order at Alpaca; Satoshi sells at the target or time limi
 in the Studio's top bar stops new crypto trades (open ones are still managed until they close). Other coins are
 excluded on purpose: on Alpaca they go 20-40% of hours without a single trade, so their prices are unreliable.
 
-## Optional features (parked)
-
-The [`optional/`](optional/README.md) folder holds finished features that are **not active** and not loaded by
-the bot, each with instructions to switch it on later. Right now: a **forex desk** (needs a free OANDA account),
-parked until the account is big enough for forex to make a difference.
-
 ## Risk profile (`RISK_PROFILE` in `.env`)
 
 `conservative`, `balanced` or `aggressive` (this account uses **aggressive**: about 2x the risk per trade,
@@ -135,6 +129,12 @@ If every AI is unavailable, the traders keep trading on the numbers alone (the A
 * The stock list is today's S&P 500, so history looks better than reality (companies that collapsed were removed).
 * Paper fills are friendlier than real ones. Compare results against simply holding SPY (every report does).
 * Real money requires `ALPACA_PAPER=false` **and** `I_UNDERSTAND_LIVE_TRADING_RISK=true` in `.env`.
+
+## Optional features (parked)
+
+The [`optional/`](optional/README.md) folder holds finished features that are **not active** and not loaded by
+the bot, each with instructions to switch it on later. Right now: a **forex desk** (needs a free OANDA account),
+parked until the account is big enough for forex to make a difference.
 
 ## Files
 
