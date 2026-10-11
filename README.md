@@ -88,6 +88,25 @@ inside the same background process as the bots.
 The PC must be on (and not asleep) for it to run 24/7. It keeps Windows from idle-sleeping while it runs, but
 closing the laptop lid can still sleep it. Set *Settings > System > Power > Lid close = Do nothing* if needed.
 
+## Phone notifications (free)
+
+The bot pushes updates to your phone through **ntfy** (free, open source, no account), and it works the same on this
+PC or on a cloud server. Install the **ntfy** app (iPhone or Android), tap **+**, and subscribe to the topic
+name in `.env` (`NOTIFY_NTFY_TOPIC`). You'll get:
+
+| notification | when |
+|---|---|
+| Desk bought | a position is opened |
+| Position closed | with its % and $ profit/loss |
+| New champion brain | a desk's lab promotes a better brain (max one per desk every 6 hours) |
+| Crypto desk update | a crypto brain passes its backtests, passes its shadow test, or loses its clearance |
+| Report | every 8 hours: equity, today's change, trades and P&L since the last report |
+| Warning | loss limits, size cuts, AI demotions, a crashed agent |
+
+Pick which ones with `NOTIFY_EVENTS`. Test anytime: `.venv\Scripts\python.exe -m trader.notify`.
+Since a stopped bot can't send anything, add a free **healthchecks.io** check URL as `HEALTHCHECK_URL`. It gets
+pinged every 5 minutes and alerts you (by email, or through ntfy too) if the pings stop.
+
 ## Crypto desk (switch it on/off in the Studio)
 
 Nova (researcher) and Satoshi (trader) trade **BTC, ETH, SOL and XRP 24/7** on hourly bars from a desk in the lab

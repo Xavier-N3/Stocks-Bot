@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 
-from trader import config, db, log
+from trader import config, db, log, notify
 
 L = log.get("supervisor")
 PID = config.STATE_DIR / "run.pid"
@@ -129,6 +129,7 @@ def main():
                     db.event("supervisor", f"{agents[i].name} died and was restarted", "error")
                     agents[i] = make_agents()[i]
                     launch(i)
+            notify.heartbeat()                 # optional "I'm alive" ping (HEALTHCHECK_URL)
             stopping.wait(15)
     finally:
         L.info("Shutting down agents...")

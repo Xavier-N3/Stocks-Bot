@@ -254,3 +254,5 @@ class Broker:
                    "pnl_pct=? WHERE id=?",
                    (price, (when or datetime.now(timezone.utc)).isoformat(), reason, pnl, pnl_pct, pos["id"]))
         L.info("[%s] CLOSED %s %s  %+.2f%%  ($%+.2f)", pos["desk"], pos["symbol"], reason, pnl_pct * 100, pnl)
+        db.event(f"{pos['desk']}_trader", f"CLOSED {pos['symbol']} ({pos['desk']} desk, {reason}): "
+                                          f"{pnl_pct * 100:+.2f}%  ${pnl:+,.2f}")

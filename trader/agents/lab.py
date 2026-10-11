@@ -206,6 +206,11 @@ class Lab(Agent):
                 note += (f"; final exam on the newest data: sharpe {x['sharpe']}, {x['total'] * 100:+.1f}% over "
                          f"{x['trades']} trades")
             db.event(self.name, f"[{name}] {note}")
+            if name == "crypto":
+                from .. import crypto_shadow
+                if crypto_shadow.backtest_ok(dict(data, id=gid)):
+                    db.event(self.name, f"Crypto brain {gid} passed the full backtest bar (validation + final exam) - "
+                                        "starting its 7-day live shadow test, no money used yet")
         else:
             db.execute("UPDATE genomes SET holdout_fit=? WHERE id=?", (champ_h["fitness"], champ["id"]))
             note = (f"champion kept (its unseen-data fitness {champ_h['fitness']:.3f} vs best challenger "

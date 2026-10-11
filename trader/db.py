@@ -109,6 +109,8 @@ def kv_set(key, value):
 def event(agent, msg, level="info"):
     execute("INSERT INTO events (ts, agent, level, msg) VALUES (?,?,?,?)",
             (now_iso(), agent, level, msg[:2000]))
+    from . import notify          # the important ones also go to your phone (if NOTIFY_NTFY_TOPIC is set)
+    notify.on_event(agent, msg, level)
 
 
 # ---------------------------------------------------------------- bars

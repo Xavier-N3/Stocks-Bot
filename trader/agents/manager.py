@@ -235,6 +235,22 @@ class Manager(Agent):
         if not db.kv_get("start"):
             db.kv_set("start", {"at": db.now_iso(), "equity": a["equity"], "spy": spy})
 
+    def _notify_report(self, since):
+        from .. import notify
+        if not notify.enabled():
+            return
+        try:
+            a = self.broker.account()
+            day = a["equity"] / a["last_equity"] - 1 if a["last_equity"] else 0
+            r = db.one("SELECT COUNT(*) n, SUM(pnl > 0) w, SUM(pnl) p FROM positions WHERE status='closed' AND exit_time >= ?",
+                       (since or "",))
+            n_open = db.one("SELECT COUNT(*) n FROM positions WHERE status IN ('open','pending','closing')")["n"]
+            notify.send("report", f"Report: equity ${a['equity']:,.0f} ({day * 100:+.2f}% today)",
+                        f"Since the last report: {r['n'] or 0} trades closed, {r['w'] or 0} winners, "
+                        f"P&L ${r['p'] or 0:+,.2f}. {n_open} positions open. Full report in the Studio -> Reports.")
+        except Exception as e:
+            self.log.warning("report notification skipped: %s", e)
+
     def _maybe_report(self):
         n = now_et()
         slots = sorted(hhmm(t) for t in config.REPORT_TIMES_ET.split(",") if t.strip())
@@ -251,6 +267,7 @@ class Manager(Agent):
         self.activity("Writing the 8-hour report")
         self._snapshot_equity()
         path = report.write(self.broker, since_iso=prev)
+        self._notify_report(prev)
         library.write_index()
         db.kv_set("last_report_slot", key)
         db.kv_set("last_report_at", db.now_iso())

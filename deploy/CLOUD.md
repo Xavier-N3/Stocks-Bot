@@ -36,7 +36,7 @@ Face Spaces): they sleep when idle or wipe the disk, which would stop trading an
    ```
    git clone https://github.com/<you>/<repo>.git ~/stocks-bot      # private repo: use a GitHub token as password
    cd ~/stocks-bot && bash deploy/setup_server.sh
-   nano .env        # paste the same keys as your PC's .env, add STUDIO_PASSWORD=something-long
+   nano .env        # paste the same keys as your PC's .env (including NOTIFY_NTFY_TOPIC for phone alerts), add STUDIO_PASSWORD=something-long
    bash deploy/setup_server.sh                                      # run again to finish + start the service
    ```
    Optional: copy your PC's `data/market.db` to the server (`scp`) to keep the trained brains and history;
