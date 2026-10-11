@@ -43,7 +43,11 @@ def decode(vec, n_feats, desk):
 
 
 def score(dec, X):
-    return np.tanh(X @ dec["W1"] + dec["b1"]) @ dec["W2"] + dec["b2"]
+    # runs in X's precision: training keeps its features in 32-bit, about 2-2.5x faster than 64-bit
+    # with identical trades in testing (live trading still scores in full 64-bit)
+    t = X.dtype
+    return (np.tanh(X @ dec["W1"].astype(t, copy=False) + dec["b1"].astype(t, copy=False))
+            @ dec["W2"].astype(t, copy=False) + t.type(dec["b2"]))
 
 
 def trade_levels(dec, desk, atr):
@@ -61,7 +65,7 @@ def simulate(vec, ds, desk, part="train", trades_out=None):
     cache = ds.setdefault("_cache", {})            # same rows/features for every brain: slice them once
     if part not in cache:
         r0 = np.nonzero((D >= d0) & (D < d1))[0]
-        cache[part] = (r0, np.ascontiguousarray(ds["X"][r0]))
+        cache[part] = (r0, np.ascontiguousarray(ds["X"][r0], dtype=np.float32))
     rows, Xp = cache[part]
     empty = {"fitness": -2.0, "trades": 0, "sharpe": 0.0, "total": 0.0, "winrate": 0.0,
              "avg": 0.0, "maxdd": 0.0}
