@@ -14,7 +14,7 @@ INTRA_FEATS = ["day_ret", "gap", "r1", "r4", "d_vwap", "rsi", "atr", "vratio", "
 
 
 def feature_names(desk_name):
-    return INTRA_FEATS if desk_name == "day" else CRYPTO_FEATS if desk_name == "crypto" else DAILY_FEATS
+    return {"day": INTRA_FEATS, "crypto": CRYPTO_FEATS, "forex": FX_FEATS}.get(desk_name, DAILY_FEATS)
 
 
 def _rsi(c, n=14):
@@ -197,6 +197,79 @@ def crypto_features(bars: pd.DataFrame, bench: str = "BTC/USD") -> pd.DataFrame:
     return df.drop(columns=["_t"]).sort_values(["symbol", "ts"]).reset_index(drop=True)
 
 
+# ---------------------------------------------------------------- forex (hourly, Sunday 5pm - Friday 5pm New York)
+# Known at the close of each hourly bar: price action over 1h..4 weeks, trend, volatility regime, tick volume,
+# how strong the US dollar is across all pairs, which way this instrument bets on the dollar, the trading
+# session (Asia / London / New York via time of day), day of week, and the US stock market's last session.
+FX_FEATS = ["r1", "r4", "r12", "r24", "r72", "r120", "d_ema24", "d_ema72", "d_ema120", "d_ema480",
+            "rsi", "atr", "vol24", "vol_ratio", "bbpos", "d_hi120", "d_lo120", "d_hi480", "vratio",
+            "usd_r4", "usd_r24", "usd_r120", "usd_side", "hod_sin", "hod_cos", "dow_sin", "dow_cos",
+            "spy_r1d", "spy_r5d"]
+
+
+def _fx_one(g):
+    c, h, l, v = g["c"], g["h"], g["l"], g["v"]
+    f = pd.DataFrame(index=g.index)
+    for n in (1, 4, 12, 24, 72, 120):
+        f[f"r{n}"] = c / c.shift(n) - 1
+    for n in (24, 72, 120, 480):
+        f[f"d_ema{n}"] = c / c.ewm(span=n, adjust=False, min_periods=min(n, 120)).mean() - 1
+    f["rsi"] = _rsi(c)
+    f["atr"] = _atr_pct(h, l, c)
+    f["vol24"] = f["r1"].rolling(24).std()
+    f["vol_ratio"] = np.log(f["vol24"] / f["r1"].rolling(120).std())
+    sd = c.rolling(24).std()
+    f["bbpos"] = (c - c.rolling(24).mean()) / (2 * sd.replace(0, np.nan))
+    f["d_hi120"] = c / h.rolling(120).max() - 1
+    f["d_lo120"] = c / l.rolling(120).min() - 1
+    f["d_hi480"] = c / h.rolling(480, min_periods=120).max() - 1
+    f["vratio"] = np.log((v / v.rolling(24).mean().replace(0, np.nan)).clip(0.05, 20))
+    return f
+
+
+def fx_features(bars: pd.DataFrame) -> pd.DataFrame:
+    """bars: hourly symbol, ts, o, h, l, c, v for pairs AND their _SHORT twins."""
+    parts = []
+    for sym, g in bars.groupby("symbol", sort=False):
+        g = g.sort_values("ts").reset_index(drop=True)
+        out = pd.concat([g, _fx_one(g)], axis=1)
+        # the market shuts every weekend: each trading week is its own stretch for trade outcomes, so a
+        # simulated trade can never be carried across the weekend (live, everything is closed Friday 4pm)
+        out["seg"] = sym + "#" + (g["ts"].diff() > pd.Timedelta(hours=6)).cumsum().astype(str)
+        parts.append(out)
+    df = pd.concat(parts, ignore_index=True)
+    sym = df["symbol"]
+    short = sym.str.endswith("_SHORT")
+    pair = sym.str.replace("_SHORT", "", regex=False)
+    # +1 if buying this instrument means buying US dollars (long USD_JPY, or short EUR_USD), else -1
+    df["usd_side"] = np.where(pair.str.startswith("USD_"), 1.0, -1.0) * np.where(short, -1.0, 1.0)
+    # US dollar strength: the average move of the dollar against every other currency we follow
+    real = df[~short]
+    for n in (4, 24, 120):
+        usd = (real[f"r{n}"] * np.where(real["symbol"].str.startswith("USD_"), 1.0, -1.0)).groupby(real["ts"]).mean()
+        df[f"usd_r{n}"] = df["ts"].map(usd)
+    t = df["ts"] + pd.Timedelta(hours=1)                                  # the moment the bar closes
+    hod, dow = t.dt.hour + t.dt.minute / 60, t.dt.dayofweek + t.dt.hour / 24
+    df["hod_sin"], df["hod_cos"] = np.sin(2 * np.pi * hod / 24), np.cos(2 * np.pi * hod / 24)
+    df["dow_sin"], df["dow_cos"] = np.sin(2 * np.pi * dow / 7), np.cos(2 * np.pi * dow / 7)
+    et = t.dt.tz_convert(ET)
+    df["entry_ok"] = ~((et.dt.dayofweek == 4) & (et.dt.hour >= 12)) & (et.dt.dayofweek != 5)   # same rule as live
+    df["_t"] = t.astype("datetime64[ns, UTC]")
+    df = df.sort_values("_t")
+    spy = db.load_bars(["SPY"], "1Day", (df["ts"].min() - pd.Timedelta(days=15)).isoformat())
+    if not spy.empty:
+        spy = spy.sort_values("ts")
+        spy["spy_r1d"] = spy["c"] / spy["c"].shift(1) - 1
+        spy["spy_r5d"] = spy["c"] / spy["c"].shift(5) - 1
+        day = spy["ts"].dt.tz_convert(ET).dt.normalize()
+        spy["_t"] = (day + pd.Timedelta(days=1)).dt.tz_convert("UTC").astype("datetime64[ns, UTC]")
+        df = pd.merge_asof(df, spy[["_t", "spy_r1d", "spy_r5d"]].dropna(), on="_t", direction="backward")
+    else:
+        df["spy_r1d"], df["spy_r5d"] = np.nan, np.nan
+    df["date"] = df["ts"]
+    return df.drop(columns=["_t"]).sort_values(["symbol", "ts"]).reset_index(drop=True)
+
+
 # ---------------------------------------------------------------- training dataset
 def _paths(sub: pd.DataFrame, L: int, step: int, same_day: bool):
     """Future price path after each bar, relative to the NEXT bar's open (the
@@ -243,7 +316,7 @@ def build_dataset(desk, bars: pd.DataFrame, holdout_frac=0.25, norm=None, start_
     elif desk.timeframe == "1Hour":
         now = pd.Timestamp.now(tz="UTC")
         bars = bars[bars["ts"] + pd.Timedelta(hours=1) <= now]           # completed hours only
-        df = crypto_features(bars, desk.bench)
+        df = fx_features(bars) if desk.name == "forex" else crypto_features(bars, desk.bench)
     else:
         today = now_et().date()
         bars = bars[bars["ts"].dt.tz_convert(ET).dt.date < today]   # completed days only
@@ -252,13 +325,16 @@ def build_dataset(desk, bars: pd.DataFrame, holdout_frac=0.25, norm=None, start_
     hourly = desk.timeframe == "1Hour"
     dates = np.array(sorted(df["date"].unique()))
     date_pos = {d: i for i, d in enumerate(dates)}
-    X, ATR, HI, LO, CL, D, S, SYMS, T = [], [], [], [], [], [], [], [], []
+    X, ATR, HI, LO, CL, D, S, SYMS, T, SLOT = [], [], [], [], [], [], [], [], [], []
+    slot_of = {}                    # one "market" per symbol; a forex _SHORT twin shares its pair's slot
     for _, sub in df.groupby("seg" if hourly else "symbol", sort=False):     # crypto: each unbroken stretch on its own
         sub = sub.reset_index(drop=True)
         valid, hi, lo, cl = _paths(sub, desk.path_len, desk.path_step, intraday)
         di = sub["date"].map(date_pos).to_numpy()
         m = valid & sub[feats + ["atr"]].notna().all(axis=1).to_numpy()
         m &= (sub["atr"] > 0).to_numpy() & ((sub["c"] >= 5).to_numpy() if not hourly else True)
+        if "entry_ok" in sub:
+            m &= sub["entry_ok"].to_numpy(bool)
         sd0 = (start_dates or {}).get(sub["symbol"].iloc[0])
         if sd0:
             m &= (sub["date"].astype(str) >= sd0).to_numpy()
@@ -272,6 +348,8 @@ def build_dataset(desk, bars: pd.DataFrame, holdout_frac=0.25, norm=None, start_
         ATR.append(sub.loc[m, "atr"].to_numpy(np.float32))
         HI.append(hi[m]); LO.append(lo[m]); CL.append(cl[m])
         D.append(di[m]); S.append(np.full(m.sum(), si, np.int32))
+        mk = str(sub["symbol"].iloc[0]).replace("_SHORT", "")
+        SLOT.append(np.full(m.sum(), slot_of.setdefault(mk, len(slot_of)), np.int32))
         T.append(sub.loc[m, "mins"].to_numpy(np.int32) if intraday else np.zeros(m.sum(), np.int32))
         SYMS.append(sub["symbol"].iloc[0])
     if not X:
@@ -291,6 +369,7 @@ def build_dataset(desk, bars: pd.DataFrame, holdout_frac=0.25, norm=None, start_
         "X": np.clip((X - mu) / sd, -4, 4).astype(np.float32),
         "atr": np.concatenate(ATR), "hi": np.concatenate(HI), "lo": np.concatenate(LO),
         "cl": np.concatenate(CL), "date": D, "tod": np.concatenate(T), "sym": np.concatenate(S),
+        "slot": np.concatenate(SLOT),
         "n_dates": len(dates),
         "split": split, "split2": split2, "dates": [str(d) for d in dates], "symbols": SYMS,
     }
@@ -300,7 +379,14 @@ def build_dataset(desk, bars: pd.DataFrame, holdout_frac=0.25, norm=None, start_
 def live_features(desk, symbols, today_only=True) -> pd.DataFrame:
     """Latest feature row per symbol from completed bars in the database."""
     syms = sorted(set(symbols) | {desk.bench})
-    if desk.timeframe == "1Hour":
+    if desk.name == "forex":
+        since = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=90)).isoformat()
+        bars = db.load_bars(sorted(set(syms) | set(config.FOREX_UNIVERSE)), "1Hour", since)   # all pairs: USD strength
+        if bars.empty:
+            return pd.DataFrame()
+        bars = bars[bars["ts"] + pd.Timedelta(hours=1) <= pd.Timestamp.now(tz="UTC")]
+        df = fx_features(bars)
+    elif desk.timeframe == "1Hour":
         since = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=90)).isoformat()   # enough for the 30-day averages
         bars = db.load_bars(sorted(set(syms) | set(config.CRYPTO_UNIVERSE)), "1Hour", since)   # all coins: market breadth
         if bars.empty:

@@ -83,7 +83,9 @@ def build(broker, since_iso=None) -> str:
 
     from . import crypto_shadow
     L += [f"**Crypto desk:** {'ON' if risk.crypto_enabled() else 'OFF'} - "
-          f"{crypto_shadow.stage(brain.champion('crypto'))['label']}", ""]
+          f"{crypto_shadow.stage(brain.champion('crypto'))['label']}",
+          f"**Forex desk:** " + (f"{crypto_shadow.stage(brain.champion('forex'))['label']}" if config.FOREX_ENABLED
+                                 else "waiting for an OANDA practice account (OANDA_API_TOKEN in .env)"), ""]
 
     # ---- closed trades
     closed = db.query("SELECT * FROM positions WHERE status='closed' AND exit_time>=? ORDER BY exit_time", (since_iso,))
@@ -178,7 +180,8 @@ def build(broker, since_iso=None) -> str:
     # ---- health
     rows = []
     for name in ["day_researcher", "day_trader", "swing_researcher", "swing_trader", "long_researcher",
-                 "long_trader", "crypto_researcher", "crypto_trader", "challenger", "manager", "lab"]:
+                 "long_trader", "crypto_researcher", "crypto_trader", "forex_researcher", "forex_trader", "challenger",
+                 "manager", "lab"]:
         hb = db.kv_get(f"heartbeat:{name}") or {}
         rows.append([name, _t(hb.get("at", "")), hb.get("status", "never ran")[:80]])
     errs = db.query("SELECT ts, agent, level, msg FROM events WHERE ts>=? AND level IN ('error','warning') "

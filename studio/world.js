@@ -22,7 +22,7 @@
     wood: "#8b5e3c", woodTop: "#a6744d", woodDark: "#5e3f29", stone: "#cfc6b8", steel: "#9aa3a8",
     leaf: ["#5f8f4e", "#6fa35a", "#4f7d42", "#7cb064"], pot: "#c0724a", cream: "#f3e6cf",
     sofa: "#a65d4b", sofaDark: "#86483a", sofa2: "#5e7f8c", rugA: "#8e3f3a", rugB: "#d9a45b",
-    screen: "#0f1a22", day: "#3987e5", swing: "#d95926", long: "#199e70",
+    screen: "#0f1a22", day: "#3987e5", swing: "#d95926", long: "#199e70", forex: "#22a6c7",
   };
 
   // ------------------------------------------------------------------ layout
@@ -76,11 +76,13 @@
 
   // lab
   add("rug", 12.4, 7.3, 5.8, 3.4, { color: "#e66767", label: "CRYPTO · 24/7" }, false);
+  add("rug", 2.4, 7.3, 5.8, 3.4, { color: C.forex, label: "FOREX · 24/5" }, false);
   for (const [x, y] of [[3, 4], [8, 4], [13, 4], [3, 8], [13, 8]]) {
-    const crypto = x === 13 && y === 8;          // the crypto desk lives in the lab corner
-    add("desk", x, y, 4, 1, { lab: !crypto });
-    screens.push({ x: x + 0.3, y: y + 0.08, w: 1.5, h: 0.45, kind: crypto ? "chart" : "code", color: crypto ? "#e66767" : "#c98500" });
-    screens.push({ x: x + 2.1, y: y + 0.08, w: 1.5, h: 0.45, kind: crypto ? "chart" : x === 8 ? "evo" : "code", color: crypto ? "#e66767" : "#c98500" });
+    const crypto = x === 13 && y === 8, forex = x === 3 && y === 8;   // the two 24-hour desks sit in the lab's corners
+    const col = crypto ? "#e66767" : forex ? C.forex : "#c98500", trade = crypto || forex;
+    add("desk", x, y, 4, 1, { lab: !trade });
+    screens.push({ x: x + 0.3, y: y + 0.08, w: 1.5, h: 0.45, kind: trade ? "chart" : "code", color: col });
+    screens.push({ x: x + 2.1, y: y + 0.08, w: 1.5, h: 0.45, kind: trade ? "chart" : x === 8 ? "evo" : "code", color: col });
     lights.push({ x: x + 2, y: y + 0.6, r: 2.6, color: "255,200,120", kind: "screen" });
   }
   add("rack", 1, 10, 2, 4); add("whiteboard", 7, 1, 6, 1, { text: "neural" });
@@ -143,10 +145,11 @@
     long_researcher: P(37, 5, "s"), long_trader: P(38, 8, "n"),
     manager: P(50, 4, "s"), lab: P(9, 5, "n"), challenger: P(52, 20, "w"),
     crypto_researcher: P(14, 9, "n"), crypto_trader: P(15, 9, "n"),
+    forex_researcher: P(4, 9, "n"), forex_trader: P(5, 9, "n"),
   };
   // the desk monitors face the sitter: researchers sit north of their pod facing south, etc.
   const HANDOFF = { day: P(22, 9, "e", false), swing: P(29, 9, "e", false), long: P(36, 9, "e", false),
-    crypto: P(16, 10, "w", false) };
+    crypto: P(16, 10, "w", false), forex: P(7, 9, "w", false) };
   const POI = {
     coffee: [P(12, 17, "n", false, "coffee")], fridge: [P(14, 18, "n", false)],
     stools: [P(5, 23, "n"), P(7, 23, "n"), P(9, 23, "n"), P(10, 23, "n")],
@@ -160,7 +163,7 @@
     cooler: [P(40, 3, "e", false)],
     rack: [P(3, 11, "w", false), P(3, 12, "w", false)],
     labboard: [P(10, 2, "n", false), P(8, 2, "n", false)],
-    labdesks: [P(4, 9, "n"), P(4, 5, "n"), P(14, 5, "n")],
+    labdesks: [P(4, 5, "n"), P(14, 5, "n")],
     officevisit: [P(49, 8, "n"), P(52, 8, "n")], officeshelf: [P(56, 5, "e", false)],
     debatewb: [P(45, 17, "n", false), P(47, 17, "n", false)],
     debatevisit: [P(47, 20, "e"), P(49, 18, "s"), P(50, 22, "n")],
@@ -183,7 +186,7 @@
   ];
   const CHAIR_COL = { day_researcher: "#2f5f9e", day_trader: "#2f5f9e", swing_researcher: "#9e4a26", swing_trader: "#9e4a26",
     long_researcher: "#1f6e52", long_trader: "#1f6e52", manager: "#5b4a8a", lab: "#7a5a1a",
-    crypto_researcher: "#8a3a3a", crypto_trader: "#8a3a3a" };
+    crypto_researcher: "#8a3a3a", crypto_trader: "#8a3a3a", forex_researcher: "#1d6f82", forex_trader: "#1d6f82" };
   for (const [id, p] of Object.entries(HOME)) {
     solid[p.y][p.x] = 0;
     if (CHAIR_COL[id]) items.push({ kind: "chair", x: p.x, y: p.y, w: 1, h: 1, face: p.face, color: CHAIR_COL[id] });
@@ -956,10 +959,10 @@
     scene.spy = st.spy; scene.equity = st.account?.equity; scene.open = st.market?.open;
     const ho = st.signals?.handoff || {};
     scene.cryptoOn = st.crypto_enabled !== false;
-    scene.tickers = ["day", "swing", "long", "crypto"].map((d) => ho[d]?.symbols?.length ? `${d.toUpperCase()}: ${ho[d].symbols.join(" · ")}` : "").filter(Boolean).join("     ✦     ") + "     ✦     ";
+    scene.tickers = ["day", "swing", "long", "crypto", "forex"].map((d) => ho[d]?.symbols?.length ? `${d.toUpperCase()}: ${ho[d].symbols.join(" · ")}` : "").filter(Boolean).join("     ✦     ") + "     ✦     ";
     const s = st.signals || {};
     if (prevSig) {
-      for (const d of ["day", "swing", "long", "crypto"]) {
+      for (const d of ["day", "swing", "long", "crypto", "forex"]) {
         if (s.handoff?.[d]?.at && s.handoff[d].at !== prevSig.handoff?.[d]?.at) {
           const r = bots.get(`${d}_researcher`), tr = bots.get(`${d}_trader`);
           if (r && !r.chatting) r.queue.unshift({ poi: HANDOFF[d], dwell: 5, bubble: `📄 Briefs: ${s.handoff[d].symbols.join(", ")}`, then: () => tr && say(tr, "Thanks! Reading them now 👀", 4) });

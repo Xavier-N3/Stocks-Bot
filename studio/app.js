@@ -8,8 +8,8 @@
   const dcls = (v) => v == null || Math.abs(v) < 1e-9 ? "" : v > 0 ? "delta-up" : "delta-down";
   const hhmm = (iso) => { try { return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); } catch { return ""; } };
   const dt = (iso) => { try { return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); } catch { return iso || ""; } };
-  const DESK_COLOR = { day: "var(--series-day)", swing: "var(--series-swing)", long: "var(--series-long)", crypto: "#e66767" };
-  const DESK_HEX = { day: "#3987e5", swing: "#d95926", long: "#199e70", crypto: "#e66767" };
+  const DESK_COLOR = { day: "var(--series-day)", swing: "var(--series-swing)", long: "var(--series-long)", crypto: "#e66767", forex: "#22a6c7" };
+  const DESK_HEX = { day: "#3987e5", swing: "#d95926", long: "#199e70", crypto: "#e66767", forex: "#22a6c7" };
   const api = async (path, opts) => { const r = await fetch(path, opts); if (!r.ok) throw new Error(r.status); const ct = r.headers.get("content-type") || ""; return ct.includes("json") ? r.json() : r.text(); };
 
   let STATE = null, view = "studio", chatId = null, dashTimer = null, eqRange = "1M", showTable = false, evoSpan = "1D", evoEnd = null;
@@ -196,18 +196,19 @@
         <p class="muted" style="font-size:12px;margin:10px 0 4px">Available now: ${esc((d.llm_available.smart || []).join(", ") || "none")}</p>
         <h3 style="margin-top:14px">Market backdrop</h3><p style="margin:0;color:var(--text-secondary);font-size:13px">${esc(d.market.summary || "—")} ${d.market.risk ? `<br><small class="muted">Risk ${d.market.risk}/5</small>` : ""}</p></div>
 
-      ${d.desks.map((x) => {
+      <div class="desk-row span-12">${d.desks.map((x) => {
         const used = x.capital ? Math.min(1, x.invested / x.capital) : 0, b = x.backtest || {};
-        return `<div class="card desk-card span-3"><h3><span class="tag"><i style="background:${DESK_COLOR[x.id]}"></i>${esc(x.title)}</span><span class="status-pill ${x.brain}">${x.id === "crypto" && x.brain === "probation" ? "sitting out" : x.brain}</span></h3>
-          <div class="muted" style="font-size:12px">Invested ${money(x.invested, 0)} of ${money(x.capital, 0)} (${Math.round(x.sleeve * 100)}% of equity${x.size_mult !== 1 ? `, size ×${x.size_mult}` : ""})</div>
+        const strict = x.id === "crypto" || x.id === "forex", stage = x.id === "crypto" ? d.crypto_stage : x.id === "forex" ? d.forex_stage : null;
+        return `<div class="card desk-card"><h3><span class="tag"><i style="background:${DESK_COLOR[x.id]}"></i>${esc(x.title)}</span><span class="status-pill ${x.brain}">${strict && x.brain === "probation" ? "sitting out" : x.brain}</span></h3>
+          <div class="muted" style="font-size:12px">Invested ${money(x.invested, 0)} of ${money(x.capital, 0)} (${x.id === "forex" ? "OANDA budget" : Math.round(x.sleeve * 100) + "% of equity"}${x.size_mult !== 1 ? `, size ×${x.size_mult}` : ""})</div>
           <div class="bar"><i style="width:${used * 100}%;background:${DESK_COLOR[x.id]}"></i></div>
           <dl><dt>Open positions</dt><dd>${x.positions} / ${x.max_positions}</dd>
           <dt>Closed trades · win rate</dt><dd>${x.trades} · ${x.trades ? Math.round(100 * x.wins / x.trades) + "%" : "—"}</dd>
           <dt>Realized P&amp;L</dt><dd>${money(x.realized)}</dd><dt>Unrealized P&amp;L</dt><dd>${money(x.unrealized)}</dd>
           <dt>Backtest on unseen data</dt><dd>${b.trades ? `${pct(b.total, 1)} · ${b.trades} trades · ${Math.round(100 * (b.winrate || 0))}% wins` : "—"}</dd>
           <dt>AI veto · Challenger</dt><dd>${esc(x.llm_mode)} · ${esc(x.challenger_mode)}</dd></dl>
-          ${x.id === "crypto" && d.crypto_stage ? `<div class="muted" style="font-size:12px;margin-top:8px;line-height:1.4"><b style="color:var(--text-secondary)">Stage:</b> ${esc(d.crypto_stage.label)}</div>` : ""}</div>`;
-      }).join("")}
+          ${stage ? `<div class="muted" style="font-size:12px;margin-top:8px;line-height:1.4"><b style="color:var(--text-secondary)">Stage:</b> ${esc(stage.label)}</div>` : ""}</div>`;
+      }).join("")}</div>
 
       <div class="card span-7"><h3>Open positions <small>${d.positions.length} held</small></h3><div class="scroll"><table>
         <tr><th>Desk</th><th>Symbol</th><th class="r">Qty</th><th class="r">Entry</th><th class="r">Now</th><th class="r">P&amp;L</th><th class="r">Stop</th><th class="r">Target</th><th>Exit by</th></tr>
@@ -238,7 +239,7 @@
         <p class="muted" style="font-size:12px;margin:6px 0 0">Each dot = the best brain score a desk reached in that time slot (big filled dot = a new champion was promoted). Higher = better risk-adjusted results on data the brains never trained on. Drag the chart sideways or use ◀ Older to look back.</p></div>
       <div class="card span-4"><h3>Are the AI filters helping? <small>avg price move after the decision</small></h3><table>
         <tr><th>Desk</th><th class="r">Bought</th><th class="r">PM vetoed</th><th class="r">Challenger rejected</th></tr>
-        ${["day", "swing", "long", "crypto"].map((k) => { const x = dec[k] || {}; const f = (r) => r ? `${r.n} · ${r.a == null ? "pending" : pct(r.a)}` : "0"; return `<tr><td><span class="tag"><i style="background:${DESK_COLOR[k]}"></i>${k}</span></td><td class="r">${f(x.buy)}</td><td class="r">${f(x.veto)}</td><td class="r">${f(x.challenged)}</td></tr>`; }).join("")}
+        ${["day", "swing", "long", "crypto", "forex"].map((k) => { const x = dec[k] || {}; const f = (r) => r ? `${r.n} · ${r.a == null ? "pending" : pct(r.a)}` : "0"; return `<tr><td><span class="tag"><i style="background:${DESK_COLOR[k]}"></i>${k}</span></td><td class="r">${f(x.buy)}</td><td class="r">${f(x.veto)}</td><td class="r">${f(x.challenged)}</td></tr>`; }).join("")}
       </table><p class="muted" style="font-size:12px">If rejected stocks keep beating bought ones, the manager automatically takes the AI's veto power away.</p></div>`;
 
     document.querySelectorAll("#rng button").forEach((b) => b.addEventListener("click", () => { eqRange = b.dataset.r; document.querySelectorAll("#rng button").forEach((x) => x.classList.toggle("on", x === b)); drawEquity(); }));
@@ -262,7 +263,7 @@
     const fmtFull = (t) => new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
     $("#evo-range").textContent = `${fmtFull(t0)} – ${d.has_newer ? fmtFull(t1) : "now"}`;
     $("#evo-old").disabled = !d.has_older; $("#evo-new").disabled = !d.has_newer; $("#evo-latest").disabled = !d.has_newer;
-    const desks = ["day", "swing", "long", "crypto"].filter((k) => d.points.some((p) => p.desk === k));
+    const desks = ["day", "swing", "long", "crypto", "forex"].filter((k) => d.points.some((p) => p.desk === k));
     holder.innerHTML = `<div class="legend">${desks.map((k) => `<span><i style="background:${DESK_HEX[k]}"></i>${k[0].toUpperCase() + k.slice(1)}</span>`).join("")}</div>
       <div class="chart"><canvas style="cursor:grab"></canvas><div class="tip"></div></div>`;
     const cv = $("canvas", holder), tip = $(".tip", holder), dpr = Math.min(2, devicePixelRatio || 1);

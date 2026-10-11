@@ -24,6 +24,7 @@ def make_agents():
     from trader.agents.challenger import Challenger
     return [Researcher("day"), Trader("day"), Researcher("swing"), Trader("swing"),
             Researcher("long"), Trader("long"), Researcher("crypto"), Trader("crypto"),
+            Researcher("forex"), Trader("forex"),
             Challenger(), Manager(), Lab()]
 
 

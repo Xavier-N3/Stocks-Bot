@@ -22,52 +22,64 @@ class Lab(Agent):
         self.broker = Broker()
         self.cache = {}
         self.rushing = False
-        self._pool = None          # (dataset, worker pool) kept warm for crypto boost runs
+        self.boosted = set()       # strict desks (crypto / forex) still in training: trained nonstop
+        self._pools = {}           # desk -> (dataset, worker pool) kept warm between boost runs
 
     def wait_seconds(self):
         return 5 if self.rushing else 60
 
-    def _rush(self):
-        """True until a crypto brain passes the strict backtest bar (then it moves on to shadow testing)."""
-        if not config.TRAINING_RUSH or not risk.crypto_enabled():
-            return False
+    def _enabled(self, name):
+        if name == "crypto":
+            return risk.crypto_enabled()
+        if name == "forex":
+            return config.FOREX_ENABLED
+        return True
+
+    def _boost_desks(self) -> set:
+        """Strict desks that have no brain past the backtest bar yet (they move on to shadow testing after)."""
+        if not config.TRAINING_RUSH:
+            return set()
         from .. import crypto_shadow
-        return crypto_shadow.stage(brain.champion("crypto"))["stage"] == "training"
+        return {d for d in config.STRICT_DESKS if self._enabled(d) and self._data_ready(d)
+                and crypto_shadow.stage(brain.champion(d))["stage"] == "training"}
 
     def step(self):
-        rush = self._rush()
-        if rush != self.rushing:
-            db.event(self.name, ("Crypto boost ON: crypto trains nonstop with bigger, longer runs, other desks every "
-                                 f"{config.RUSH_OTHERS_EVERY_MIN} min, until a crypto brain passes") if rush else
-                                "A crypto brain passed the backtest bar - boost OFF, back to the normal training pace")
-            self.rushing = rush
-            if not rush:
-                self._close_pool()
-        for name in config.DESKS:
+        boost = self._boost_desks()
+        for d in sorted(boost - self.boosted):
+            db.event(self.name, f"{d.title()} boost ON: {d} trains nonstop with bigger, longer runs until a brain "
+                                f"passes (other desks every {config.RUSH_OTHERS_EVERY_MIN} min meanwhile)")
+        for d in sorted(self.boosted - boost):
+            db.event(self.name, f"A {d} brain passed the backtest bar - {d} boost OFF, back to the normal training pace")
+            self._close_pool(d)
+        self.boosted, self.rushing = boost, bool(boost)
+        # boosted desks take turns; the one that waited longest goes first
+        order = sorted(config.DESKS, key=lambda n: (n not in boost, db.kv_get(f"last_evolve:{n}") or ""))
+        for name in order:
             if self._data_ready(name) and self._due(name):
                 self._evolve(name)
 
-    def _crypto_pool(self, ds):
-        if self._pool and self._pool[0] is ds:
-            return self._pool[1]
-        self._close_pool()
+    def _pool_for(self, name, ds):
+        hit = self._pools.get(name)
+        if hit and hit[0] is ds:
+            return hit[1]
+        self._close_pool(name)
         try:
-            self._pool = (ds, evolution.make_pool(ds, config.DESKS["crypto"], config.LAB_WORKERS))
+            self._pools[name] = (ds, evolution.make_pool(ds, config.DESKS[name], config.LAB_WORKERS))
         except Exception as e:
-            self.log.warning("could not start the crypto worker pool: %s", e)
+            self.log.warning("could not start the %s worker pool: %s", name, e)
             return None
-        return self._pool[1]
+        return self._pools[name][1]
 
-    def _close_pool(self):
-        if self._pool:
-            self._pool[1].shutdown(wait=False, cancel_futures=True)
-            self._pool = None
+    def _close_pool(self, name):
+        hit = self._pools.pop(name, None)
+        if hit:
+            hit[1].shutdown(wait=False, cancel_futures=True)
 
     def _data_ready(self, name):
-        if name == "crypto" and not risk.crypto_enabled():
-            return False                   # switched off in the Studio: don't spend CPU on it
+        if not self._enabled(name):
+            return False                   # switched off (crypto) / no OANDA account yet (forex): no CPU spent
         desk = config.DESKS[name]
-        tf, need = {"day": ("15Min", 26 * 20), "crypto": ("1Hour", 24 * 60)}.get(name, ("1Day", 400))
+        tf, need = {"day": ("15Min", 26 * 20), "crypto": ("1Hour", 24 * 60), "forex": ("1Hour", 24 * 60)}.get(name, ("1Day", 400))
         r = db.one("SELECT COUNT(*) n FROM bars WHERE symbol=? AND tf=?", (desk.bench, tf))
         return r["n"] >= need
 
@@ -79,8 +91,8 @@ class Lab(Agent):
             return True
         age = datetime.now(timezone.utc) - datetime.fromisoformat(last)
         if self.rushing:
-            return name == "crypto" or age >= timedelta(minutes=config.RUSH_OTHERS_EVERY_MIN)
-        if name == "crypto" and brain.status(brain.champion("crypto")) != "active":
+            return name in self.boosted or age >= timedelta(minutes=config.RUSH_OTHERS_EVERY_MIN)
+        if name in config.STRICT_DESKS and brain.status(brain.champion(name)) != "active":
             return age >= timedelta(minutes=config.CRYPTO_TRAIN_EVERY_MIN)   # keep training until good enough
         req = db.kv_get(f"evolve_request:{name}")
         if req and req > last and age >= timedelta(minutes=config.DESKS[name].evolve_cooldown_min):
@@ -91,6 +103,8 @@ class Lab(Agent):
         desk = config.DESKS[name]
         if name == "crypto":
             return sorted(set(config.CRYPTO_UNIVERSE) | {desk.bench})
+        if name == "forex":
+            return sorted(config.FOREX_UNIVERSE)
         if name == "day":
             rows = db.query("SELECT symbol, COUNT(*) n FROM bars WHERE tf='15Min' GROUP BY symbol HAVING n >= ? "
                             "ORDER BY n DESC", (26 * 15,))
@@ -140,26 +154,27 @@ class Lab(Agent):
         champ = brain.champion(name)
         first = champ is None
         market_open = self.broker.clock()["is_open"]
-        boost = name == "crypto" and self.rushing and config.CRYPTO_BOOST
+        boost = name in self.boosted and config.CRYPTO_BOOST
+        stall_key = f"{name}_stall"
         budget = 300 if first or boost else (45 if name == "day" and market_open else 150)
-        gens = config.BOOST_GENS if boost else 40 if first else (40 if name == "crypto" else 15)
-        pop_size = config.BOOST_POP if boost else 64 if name == "crypto" else 32
+        gens = config.BOOST_GENS if boost else 40 if first else (40 if name in config.STRICT_DESKS else 15)
+        pop_size = config.BOOST_POP if boost else 64 if name in config.STRICT_DESKS else 32
         pop = db.kv_get(f"population:{name}")
-        if boost and pop and (db.kv_get("crypto_stall") or 0) >= config.BOOST_STALL_RUNS:
+        if boost and pop and (db.kv_get(stall_key) or 0) >= config.BOOST_STALL_RUNS:
             pop = pop[:8]          # search is stuck: keep the 8 best brains, fill the rest with fresh random ones
-            db.kv_set("crypto_stall", 0)
-            db.event(self.name, f"[crypto] no progress in {config.BOOST_STALL_RUNS} runs - shaking up the gene pool "
+            db.kv_set(stall_key, 0)
+            db.event(self.name, f"[{name}] no progress in {config.BOOST_STALL_RUNS} runs - shaking up the gene pool "
                                 "(keeping the 8 best brains, the rest are brand new)")
         self.activity(f"Breeding {pop_size} {name} brains on {config.LAB_WORKERS} CPU cores, up to {gens} generations "
-                      f"on {len(ds['X']):,} historical setups{' (crypto boost)' if boost else ''}")
+                      f"on {len(ds['X']):,} historical setups{f' ({name} boost)' if boost else ''}")
         t0 = time.time()
         try:
             pop, cands, ran = evolution.evolve(ds, desk, pop, gens, pop_size, budget, workers=config.LAB_WORKERS,
-                                               pool=self._crypto_pool(ds) if boost else None,
+                                               pool=self._pool_for(name, ds) if boost else None,
                                                n_cands=config.BOOST_CANDIDATES if boost else 6)
         except Exception:
             if boost:
-                self._close_pool()     # a broken worker pool gets rebuilt next run
+                self._close_pool(name)     # a broken worker pool gets rebuilt next run
             raise
         db.kv_set(f"population:{name}", [np.round(v, 5).tolist() for v in pop])
         best = cands[0]
@@ -167,14 +182,14 @@ class Lab(Agent):
         if champ is not None and len(champ["vec"]) == evolution.n_genes(len(ds["feats"])):
             champ_h = evolution.simulate(champ["vec"], ds, desk, "holdout")
         margin = 0.05
-        if name == "crypto" and champ is not None:
+        if name in config.STRICT_DESKS and champ is not None:
             # don't churn: a brain in (or past) its shadow test is only replaced by a clearly better one
             from .. import crypto_shadow
             st = crypto_shadow.stage(champ)
             margin = 0.5 if st["stage"] in ("shadow", "cleared") and st["shadow"]["trades"] >= 3 else 0.25
         promote = champ_h is None or (best["holdout"]["fitness"] > champ_h["fitness"] + margin
                                       and best["holdout"]["trades"] >= 5)
-        if name == "crypto":
+        if name in config.STRICT_DESKS:
             # A brain that clears the validation bar replaces a champion that doesn't. Picking is done on
             # validation ONLY - the final exam is taken by the chosen champion alone, so it stays honest.
             from .. import crypto_shadow
@@ -182,7 +197,7 @@ class Lab(Agent):
             if passing and not (champ and crypto_shadow.val_ok(champ)):
                 best, promote = passing[0], True
         if boost:
-            db.kv_set("crypto_stall", 0 if promote else (db.kv_get("crypto_stall") or 0) + 1)
+            db.kv_set(stall_key, 0 if promote else (db.kv_get(stall_key) or 0) + 1)
         note = ""
         if promote:
             gid = f"{name}-{datetime.now(timezone.utc):%Y%m%d%H%M}-{uuid.uuid4().hex[:4]}"
