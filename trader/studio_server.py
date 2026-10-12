@@ -122,6 +122,10 @@ def equity_series(rng):
             for t, r in df.iterrows()]
 
 
+# window length and slot size for the neuroevolution chart (~36-48 evenly spaced slots per window)
+EVO_SPANS = {"6H": (6 * 3600, 600), "1D": (86400, 1800), "1W": (7 * 86400, 4 * 3600), "1M": (30 * 86400, 86400)}
+
+
 def evolution_series(span="1D", end=None):
     """Training runs grouped into evenly spaced time slots, for one window of the evolution chart.
     Each point = the best unseen-data score a desk reached in that slot (plus how many runs, and
