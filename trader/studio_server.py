@@ -98,32 +98,28 @@ def state():
 
 # ---------------------------------------------------------------- dashboard
 def equity_series(rng):
-    from alpaca.trading.requests import GetPortfolioHistoryRequest
-    period, tf, spy_tf = {"1D": ("1D", "5Min", "15Min"), "1W": ("1W", "1H", "15Min"),
-                          "1M": ("1M", "1D", "1Day"), "3M": ("3M", "1D", "1Day"),
-                          "1A": ("1A", "1D", "1Day")}.get(rng, ("1M", "1D", "1Day"))
-    h = broker().client.get_portfolio_history(GetPortfolioHistoryRequest(period=period, timeframe=tf,
-                                                                         extended_hours=False))
-    pts = [(datetime.fromtimestamp(t, timezone.utc), e) for t, e in zip(h.timestamp or [], h.equity or []) if e]
-    if not pts:
+    """Portfolio vs S&P 500 for the chart, from the bot's own equity snapshots (taken every 15 minutes, weekends
+    included), not Alpaca's portfolio history - that one shows a phantom ~$51k on the day the account was funded
+    and, on weekends, only Friday's session. Ranges are rolling windows ending now: 1D = the last 24 hours."""
+    span, step = {"1D": (1, "15min"), "1W": (7, "1h"), "1M": (30, "4h"), "3M": (90, "1D"),
+                  "1A": (365, "1D")}.get(rng, (30, "4h"))
+    since = (datetime.now(timezone.utc) - timedelta(days=span)).isoformat()
+    rows = db.query("SELECT ts, equity, spy FROM equity WHERE ts >= ? AND equity > 0 ORDER BY ts", (since,))
+    acct = cached("account", 20, lambda: broker().account()) or {}
+    if acct.get("equity"):                      # finish on the live value, so "now" is always on the chart
+        last_spy = rows[-1]["spy"] if rows else None
+        rows.append({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), "equity": acct["equity"], "spy": last_spy})
+    if not rows:
         return []
-    df = pd.DataFrame(pts, columns=["ts", "equity"]).sort_values("ts")
-    spy = db.load_bars(["SPY"], spy_tf, (df["ts"].iloc[0] - timedelta(days=5)).isoformat())
-    if not spy.empty:
-        spy = spy[["ts", "c"]].sort_values("ts")
-        df = pd.merge_asof(df, spy, on="ts", direction="backward")
-    else:
-        df["c"] = None
+    df = pd.DataFrame(rows)
+    df["ts"] = pd.to_datetime(df["ts"], utc=True, format="ISO8601")
+    df = df.set_index("ts").resample(step).last().dropna(subset=["equity"])   # one point per slot keeps it readable
+    df["spy"] = df["spy"].ffill()
     e0 = df["equity"].iloc[0]
-    c0 = df["c"].dropna().iloc[0] if df["c"].notna().any() else None
-    return [{"t": r.ts.isoformat(), "equity": round(float(r.equity), 2),
-             "eq_pct": round(float(r.equity / e0 - 1), 5),
-             "spy_pct": round(float(r.c / c0 - 1), 5) if c0 and r.c == r.c and r.c is not None else None}
-            for r in df.itertuples()]
-
-
-# window length and slot size for the neuroevolution chart (~36-48 evenly spaced slots per window)
-EVO_SPANS = {"6H": (6 * 3600, 600), "1D": (86400, 1800), "1W": (7 * 86400, 4 * 3600), "1M": (30 * 86400, 86400)}
+    s0 = df["spy"].dropna().iloc[0] if df["spy"].notna().any() else None
+    return [{"t": t.isoformat(), "equity": round(float(r.equity), 2), "eq_pct": round(float(r.equity / e0 - 1), 5),
+             "spy_pct": round(float(r.spy / s0 - 1), 5) if s0 and r.spy == r.spy else None}
+            for t, r in df.iterrows()]
 
 
 def evolution_series(span="1D", end=None):

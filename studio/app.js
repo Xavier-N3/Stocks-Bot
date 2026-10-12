@@ -4,7 +4,8 @@
   const $ = (s, el = document) => el.querySelector(s);
   const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const money = (v, d = 2) => v == null ? "—" : (v < 0 ? "−$" : "$") + Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
-  const pct = (v, d = 2) => v == null ? "—" : (v >= 0 ? "+" : "−") + Math.abs(v * 100).toFixed(d) + "%";
+  const pct = (v, d = 2) => { if (v == null) return "—"; const a = Math.abs(v * 100).toFixed(d);
+    return (Number(a) === 0 ? "" : v >= 0 ? "+" : "−") + a + "%"; };     // no "−0.0%"
   const dcls = (v) => v == null || Math.abs(v) < 1e-9 ? "" : v > 0 ? "delta-up" : "delta-down";
   const hhmm = (iso) => { try { return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); } catch { return ""; } };
   const dt = (iso) => { try { return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); } catch { return iso || ""; } };
@@ -122,7 +123,7 @@
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && chatId) closeChat(); });
 
   // ------------------------------------------------------------------ charts
-  function lineChart(holder, series, { height = 260, fmtY = (v) => pct(v, 1), fmtX = (t) => t, markers = false } = {}) {
+  function lineChart(holder, series, { height = 260, fmtY = null, fmtX = (t) => t, markers = false } = {}) {
     holder.innerHTML = `<div class="legend">${series.length > 1 ? series.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join("") : ""}</div>
       <div class="chart"><canvas></canvas><div class="tip"></div></div>`;
     const cv = $("canvas", holder), tip = $(".tip", holder), dpr = Math.min(2, devicePixelRatio || 1);
@@ -134,6 +135,7 @@
     const vals = series.flatMap((s) => s.values.map((p) => p.v).filter((v) => v != null));
     let lo = Math.min(0, ...vals), hi = Math.max(0, ...vals); if (hi - lo < 1e-6) { hi += .01; lo -= .01; }
     const pad = (hi - lo) * .08; lo -= pad; hi += pad;
+    if (!fmtY) { const span = (hi - lo) * 100, dg = span < 0.2 ? 3 : span < 2 ? 2 : 1; fmtY = (v) => pct(v, dg); }   // enough decimals that labels differ
     const X = (i) => padL + (n === 1 ? (W - padL - padR) / 2 : i * (W - padL - padR) / (n - 1)), Y = (v) => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
     c.font = "11px Nunito"; c.textBaseline = "middle";
     for (let k = 0; k <= 4; k++) {
