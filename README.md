@@ -98,12 +98,14 @@ name in `.env` (`NOTIFY_NTFY_TOPIC`). You'll get:
 |---|---|
 | Desk bought | a position is opened |
 | Position closed | with its % and $ profit/loss |
-| New champion brain | a desk's lab promotes a better brain (max one per desk every 6 hours) |
+| New champion brain | every time a desk's lab promotes a better brain, in plain English (crypto ones say if it passed its final exam) |
 | Crypto desk update | a crypto brain passes its backtests, passes its shadow test, or loses its clearance |
-| Report | every 8 hours: equity, today's change, trades and P&L since the last report |
+| Report | every 8 hours, only if trades closed: equity, today's change, trades and P&L |
 | Warning | loss limits, size cuts, AI demotions, a crashed agent |
 
-Pick which ones with `NOTIFY_EVENTS`. Test anytime: `.venv\Scripts\python.exe -m trader.notify`.
+**Check your equity any time:** every notification has **Equity now** and **Positions** buttons; tap one and the bot
+replies within seconds. You can also subscribe to `<your topic>-ask` in the app and send `equity` or `positions`.
+Pick which notifications you get with `NOTIFY_EVENTS`. Test anytime: `.venv\Scripts\python.exe -m trader.notify`.
 Since a stopped bot can't send anything, add a free **healthchecks.io** check URL as `HEALTHCHECK_URL`. It gets
 pinged every 5 minutes and alerts you (by email, or through ntfy too) if the pings stop.
 

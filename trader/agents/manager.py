@@ -244,6 +244,8 @@ class Manager(Agent):
             day = a["equity"] / a["last_equity"] - 1 if a["last_equity"] else 0
             r = db.one("SELECT COUNT(*) n, SUM(pnl > 0) w, SUM(pnl) p FROM positions WHERE status='closed' AND exit_time >= ?",
                        (since or "",))
+            if not r["n"]:
+                return                    # nothing happened since the last report: no need to buzz the phone
             n_open = db.one("SELECT COUNT(*) n FROM positions WHERE status IN ('open','pending','closing')")["n"]
             notify.send("report", f"Report: equity ${a['equity']:,.0f} ({day * 100:+.2f}% today)",
                         f"Since the last report: {r['n'] or 0} trades closed, {r['w'] or 0} winners, "

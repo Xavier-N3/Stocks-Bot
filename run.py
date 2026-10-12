@@ -117,6 +117,7 @@ def main():
     def stop(*_):
         stopping.set()
 
+    threading.Thread(target=notify.listen, args=(stopping,), daemon=True, name="phone").start()  # "Equity now" answers
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
     try:

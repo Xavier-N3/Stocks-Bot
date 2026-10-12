@@ -206,6 +206,9 @@ class Lab(Agent):
                 note += (f"; final exam on the newest data: sharpe {x['sharpe']}, {x['total'] * 100:+.1f}% over "
                          f"{x['trades']} trades")
             db.event(self.name, f"[{name}] {note}")
+            from .. import notify
+            notify.champion(name, desk.title.lower(), best["holdout"], champ_h["fitness"] if champ_h else None,
+                            dict(data, id=gid))
             if name == "crypto":
                 from .. import crypto_shadow
                 if crypto_shadow.backtest_ok(dict(data, id=gid)):
