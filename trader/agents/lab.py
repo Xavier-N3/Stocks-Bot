@@ -164,7 +164,7 @@ class Lab(Agent):
         db.kv_set(f"population:{name}", [np.round(v, 5).tolist() for v in pop])
         best = cands[0]
         champ_h = None
-        if champ is not None and len(champ["vec"]) == evolution.n_genes(len(ds["feats"])):
+        if champ is not None and len(champ["vec"]) == evolution.n_genes(len(ds["feats"]), desk.hidden):
             champ_h = evolution.simulate(champ["vec"], ds, desk, "holdout")
         margin = 0.05
         if name == "crypto" and champ is not None:

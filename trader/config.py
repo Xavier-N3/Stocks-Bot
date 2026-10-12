@@ -153,6 +153,7 @@ class Desk:
     holdout_frac: float = 0.25    # most recent share of history kept unseen during training (used to pick champions)
     test_frac: float = 0.0        # an even later share, never used for picking: the final exam for a new champion
     robust_blocks: int = 1        # >1: training score = consistency across this many eras, not one lucky stretch
+    hidden: int = 8               # neurons in the brain's hidden layer (smaller = simpler rules, less memorizing)
 
 
 DESKS = {
@@ -190,11 +191,13 @@ DESKS = {
         max_positions=_i("MAX_POSITIONS_CRYPTO", 2), risk_per_trade=0.004, daily_loss_pct=0.05,
         cost_per_side=0.0030, hold_range=(2, 48), stop_range=(1.0, 6.0), target_range=(1.0, 10.0),
         min_stop=0.012, path_len=48, path_step=1, decision_step=1,
-        history_days=_i("CRYPTO_HISTORY_DAYS", 2200), train_symbols=20, min_trades=90,   # 90 -> ~30 on unseen data, the clearance bar
+        # 200 trades: a brain can't win by cherry-picking a few perfect moments - it needs a strategy that works
+        # again and again (~70 trades expected in each later slice)
+        history_days=_i("CRYPTO_HISTORY_DAYS", 2200), train_symbols=20, min_trades=_i("CRYPTO_MIN_TRADES", 200),
         evolve_cooldown_min=60, periods_per_year=24 * 365, bench="BTC/USD", close_targets=True,
         # learn on the oldest 60% (2021 boom, 2022 crash, 2023-24), pick champions on the next 20%,
         # then a final exam on the newest 20% that played no part in choosing the brain
-        holdout_frac=0.2, test_frac=0.2, robust_blocks=4,
+        holdout_frac=0.2, test_frac=0.2, robust_blocks=4, hidden=_i("CRYPTO_HIDDEN", 4),
     ),
 }
 # Only coins that trade nearly every hour on Alpaca. Others (DOGE, LTC, LINK, AVAX, ...) go 20-40% of hours

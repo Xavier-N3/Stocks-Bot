@@ -14,18 +14,18 @@ HIDDEN = 8
 N_PARAMS = 4   # threshold, stop, target, hold
 
 
-def n_genes(n_feats):
-    return n_feats * HIDDEN + HIDDEN + HIDDEN + 1 + N_PARAMS
+def n_genes(n_feats, hidden=HIDDEN):
+    return n_feats * hidden + hidden + hidden + 1 + N_PARAMS
 
 
-def random_vec(n_feats, rng):
-    v = rng.normal(0, 0.5, n_genes(n_feats))
+def random_vec(n_feats, rng, hidden=HIDDEN):
+    v = rng.normal(0, 0.5, n_genes(n_feats, hidden))
     v[-N_PARAMS:] = rng.uniform(0, 1, N_PARAMS)
     return v
 
 
 def decode(vec, n_feats, desk):
-    F, Hd = n_feats, HIDDEN
+    F, Hd = n_feats, desk.hidden
     i = 0
     W1 = vec[i:i + F * Hd].reshape(F, Hd); i += F * Hd
     b1 = vec[i:i + Hd]; i += Hd
@@ -221,10 +221,10 @@ def evolve(ds, desk, population=None, generations=12, pop_size=32, time_budget=9
 def _evolve(ds, desk, population, generations, pop_size, time_budget, seed, pool, workers, n_cands=6):
     rng = np.random.default_rng(seed)
     F = len(ds["feats"])
-    G = n_genes(F)
+    G = n_genes(F, desk.hidden)
     pop = [np.asarray(v, float) for v in (population or []) if len(v) == G][:pop_size]
     while len(pop) < pop_size:
-        pop.append(random_vec(F, rng))
+        pop.append(random_vec(F, rng, desk.hidden))
     t0 = time.time()
     gens = 0
     fits = None
@@ -255,7 +255,7 @@ def _evolve(ds, desk, population, generations, pop_size, time_budget, seed, pool
             child[m] += rng.normal(0, 0.25, m.sum())
             child[-N_PARAMS:] = np.clip(child[-N_PARAMS:], 0, 1)
             new.append(child)
-        new += [random_vec(F, rng) for _ in range(2)]                  # fresh blood
+        new += [random_vec(F, rng, desk.hidden) for _ in range(2)]                  # fresh blood
         pop = new
     if fits is None:
         fits = score_all(pop)
