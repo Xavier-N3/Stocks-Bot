@@ -39,11 +39,6 @@ button, input { font: inherit; color: inherit; }
 .status { margin-left: auto; display: flex; align-items: center; gap: 12px; white-space: nowrap; }
 .pill { padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; border: 1px solid var(--line); background: var(--surface-1); }
 .pill.paper { color: var(--accent); }
-.pill.toggle { cursor: pointer; color: var(--text-secondary); }
-.pill.toggle.on { color: #f4ead9; border-color: #e66767; background: rgba(230,103,103,.18); }
-.pill.toggle.on::before { content: "● "; color: var(--good); }
-.pill.toggle.off::before { content: "○ "; color: var(--text-muted); }
-.pill.toggle:hover { border-color: var(--accent); }
 .pill.open::before { content: "● "; color: var(--good); }
 .pill.closed::before { content: "● "; color: var(--text-muted); }
 .equity { display: flex; align-items: baseline; gap: 6px; }

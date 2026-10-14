@@ -43,7 +43,6 @@ CREATE INDEX IF NOT EXISTS evolution_ts ON evolution_log (ts);
 CREATE TABLE IF NOT EXISTS llm_usage (day TEXT, provider TEXT, model TEXT, requests INTEGER,
     tokens INTEGER, errors INTEGER, PRIMARY KEY (day, provider, model));
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT, updated TEXT);
-CREATE TABLE IF NOT EXISTS macro (series TEXT, ts TEXT, value REAL, PRIMARY KEY (series, ts));
 CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, agent TEXT,
     level TEXT, msg TEXT);
 CREATE TABLE IF NOT EXISTS debates (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, desk TEXT, symbol TEXT,

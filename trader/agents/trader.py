@@ -9,13 +9,12 @@ import numpy as np
 
 from .. import brain, config, db, features, llm, risk
 from . import challenger
-from .. import crypto_shadow
 from ..broker import Broker
 from ..marketdata import MarketData
 from ..timeutil import ET, et_minutes, now_et
 from .base import Agent
 
-DECIDE_EVERY_S = {"day": 300, "swing": 1800, "long": 2 * 3600, "crypto": 600}   # long only buys into free slots, so checking often is safe
+DECIDE_EVERY_S = {"day": 300, "swing": 1800, "long": 2 * 3600}   # long only buys into free slots, so checking often is safe
 
 
 class Trader(Agent):
@@ -34,8 +33,6 @@ class Trader(Agent):
 
     # ------------------------------------------------------------ main loop
     def step(self):
-        if self.desk.name == "crypto":
-            return self._crypto_step()
         d = self.desk.name
         closed = self.broker.sync(d)
         if closed:
@@ -67,52 +64,6 @@ class Trader(Agent):
             self._decide()
             db.kv_set(f"last_decide:{d}", datetime.now(timezone.utc).timestamp())
 
-    # ------------------------------------------------------------ crypto (24/7)
-    def _crypto_step(self):
-        self._wait = 60
-        if self.broker.sync("crypto"):
-            db.kv_set("evolve_request:crypto", db.now_iso())
-        open_ = self.broker.ledger("crypto", ("open",))
-        if open_:   # targets and time limits are watched here; the downside stop also sits at Alpaca
-            snaps = self.md.snapshots([p["symbol"] for p in open_])
-            now = db.now_iso()
-            for p in open_:
-                px = (snaps.get(p["symbol"]) or {}).get("price")
-                if not px:
-                    continue
-                if p["target_price"] and px >= p["target_price"]:
-                    self.broker.close_position(p, "target")
-                elif p["stop_price"] and px <= p["stop_price"]:
-                    self.broker.close_position(p, "stop")
-                elif p["exit_deadline"] and p["exit_deadline"] <= now:
-                    self.broker.close_position(p, "max holding time")
-        n_open = len(self.broker.ledger("crypto"))
-        if not risk.crypto_enabled():
-            self.activity(f"Crypto desk switched off - no new trades ({n_open} position(s) still managed)")
-            return
-        last = db.kv_get("last_decide:crypto", 0)
-        if datetime.now(timezone.utc).timestamp() - last < DECIDE_EVERY_S["crypto"]:
-            self.activity(f"Watching {n_open} crypto position(s), 24/7")
-            return
-        db.kv_set("last_decide:crypto", datetime.now(timezone.utc).timestamp())
-        champ = brain.champion("crypto")
-        stg = crypto_shadow.stage(champ)
-        if stg["stage"] == "training":
-            self.activity("Sitting out while Darwin trains a crypto brain good enough to test")
-            return
-        # forward "exam" on live prices: paper trades only, no orders
-        self.md.update_crypto(config.CRYPTO_UNIVERSE)
-        fdf = features.live_features(self.desk, config.CRYPTO_UNIVERSE)
-        scored = brain.score_live("crypto", champ, fdf) if not fdf.empty else None
-        prices = {s: v["price"] for s, v in self.md.snapshots(config.CRYPTO_UNIVERSE).items()}
-        crypto_shadow.run(champ, scored, prices, self.desk.max_positions)
-        crypto_shadow.check_revoke(champ)
-        stg = crypto_shadow.stage(champ)
-        if stg["stage"] != "cleared":
-            self.activity(stg["label"])
-            return
-        self._decide()
-
     # ------------------------------------------------------------ exits
     def _enforce_deadlines(self):
         now = db.now_iso()
@@ -122,8 +73,6 @@ class Trader(Agent):
 
     def _deadline(self, hold_bars) -> str:
         d = self.desk.name
-        if d == "crypto":
-            return (datetime.now(timezone.utc) + timedelta(hours=hold_bars)).isoformat()
         if d == "day":
             end = now_et() + timedelta(minutes=15 * hold_bars)
             cap = now_et().replace(hour=15, minute=50, second=0, microsecond=0)
@@ -180,9 +129,6 @@ class Trader(Agent):
         if st == "untrained":
             self._note("waiting for the training lab to evolve a first brain")
             return
-        if st == "probation" and d == "crypto":
-            self._note("sitting out: no crypto brain has cleared the strict bar on unseen data yet")
-            return
         if st == "probation" and not config.PROBATION_TRADING:
             self._note("sitting out: no brain has proven an edge on unseen data yet")
             return
@@ -205,8 +151,6 @@ class Trader(Agent):
             return
         if d == "day":
             self.md.update_intraday(syms)
-        elif d == "crypto":
-            self.md.update_crypto(syms)
         fdf = features.live_features(self.desk, syms)
         if fdf.empty:
             return
@@ -243,8 +187,6 @@ class Trader(Agent):
             for i in range(0, len(through), 6):
                 debates.update(challenger.review(d, through[i:i + 6], self.name))
         mult = config.PROBATION_SIZE if st == "probation" else 1.0
-        if d == "crypto" and crypto_shadow.stage(champ).get("half_size"):
-            mult = 0.5
         for p in picks:
             v = verdicts.get(p["symbol"], {})
             deb = debates.get(p["symbol"], {})
@@ -258,26 +200,8 @@ class Trader(Agent):
                 conviction *= max(0.5, min(size, config.PROFILE["conv_cap"]))
             if deb.get("mode") == "veto":
                 conviction *= deb.get("size", 1.0)
-            strict_fail = ""
-            if d == "crypto":   # crypto only trades when EVERY check agrees, with high confidence
-                if not v or not deb:
-                    strict_fail = "no AI review available - crypto never trades on numbers alone"
-                elif v.get("action") != "buy":
-                    strict_fail = "portfolio manager said skip"
-                elif deb.get("verdict") != "proceed" or (deb.get("confidence") or 0) < 0.7:
-                    strict_fail = f"Challenger not confident enough ({deb.get('verdict')}, {deb.get('confidence')})"
-                elif (p["brief"].get("sentiment") or 0) < 0:
-                    strict_fail = "research sentiment is negative"
-            if d == "crypto":
-                notional = 0.0 if vetoed or challenged or strict_fail else risk.position_notional(
-                    d, acct, alp, p["price"], p["stop_pct"], conviction)
-                qty = round(notional / p["price"], 6) if notional >= 10 else 0
-            else:
-                qty = 0 if vetoed or challenged else risk.position_qty(d, acct, alp, p["price"], p["stop_pct"], conviction)
-            record = ("veto" if vetoed else "challenged" if challenged else "strict_skip" if strict_fail
-                      else ("buy" if qty > 0 else "no_size"))
-            if strict_fail:
-                v = dict(v, reason=(v.get("reason", "") + " | strict crypto gate: " + strict_fail).strip(" |"))
+            qty = 0 if vetoed or challenged else risk.position_qty(d, acct, alp, p["price"], p["stop_pct"], conviction)
+            record = "veto" if vetoed else "challenged" if challenged else ("buy" if qty > 0 else "no_size")
             reason = v.get("reason", "") + (f" | Challenger: {deb.get('verdict')} - {deb.get('reasoning', '')}" if deb else "")
             db.execute("INSERT INTO decisions (desk, symbol, ts, action, score, llm_verdict, size_mult, reason, price) "
                        "VALUES (?,?,?,?,?,?,?,?,?)",
@@ -294,10 +218,7 @@ class Trader(Agent):
                         "features": p["features"],
                         "llm": {"verdict": v, "sentiment": p["brief"].get("sentiment"),
                                 "summary": p["brief"].get("summary"), "debate": deb}}
-                if d == "crypto":
-                    self.broker.buy_crypto(p["symbol"], qty * p["price"], p["price"], p["stop_pct"], p["target_pct"], meta)
-                else:
-                    self.broker.buy_bracket(d, p["symbol"], qty, p["price"], p["stop_pct"], p["target_pct"], meta)
+                self.broker.buy_bracket(d, p["symbol"], qty, p["price"], p["stop_pct"], p["target_pct"], meta)
                 self.activity(f"Bought {qty} {p['symbol']} @ ${p['price']:.2f}")
                 db.event(self.name, f"BUY {qty} {p['symbol']} @ ${p['price']:.2f}")
                 acct = self.broker.account()

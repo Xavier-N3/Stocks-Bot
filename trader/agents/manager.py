@@ -13,7 +13,7 @@ from ..marketdata import MarketData
 from ..timeutil import ET, hhmm, now_et
 from .base import Agent
 
-FOLLOWUP_HOURS = {"day": 6, "swing": 24 * 7, "long": 24 * 30, "crypto": 24}
+FOLLOWUP_HOURS = {"day": 6, "swing": 24 * 7, "long": 24 * 30}
 
 
 def grade(r_mult):
@@ -71,7 +71,7 @@ class Manager(Agent):
     def _review_closed(self):
         for p in db.query("SELECT * FROM positions WHERE status='closed' AND reviewed=0 ORDER BY exit_time LIMIT 10"):
             desk = config.DESKS[p["desk"]]
-            tf = {"day": "15Min", "crypto": "1Hour"}.get(p["desk"], "1Day")
+            tf = {"day": "15Min"}.get(p["desk"], "1Day")
             entry_t = datetime.fromisoformat(p["entry_time"])
             exit_t = datetime.fromisoformat(p["exit_time"])
             bench = config.DESKS[p["desk"]].bench

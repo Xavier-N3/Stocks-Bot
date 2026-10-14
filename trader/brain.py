@@ -27,11 +27,6 @@ def status(champ) -> str:
         return "untrained"
     h = champ.get("holdout", {})
     desk = config.DESKS[champ["id"].split("-")[0]]
-    if desk.name == "crypto":
-        # The strictest bar in the firm: a clear win on unseen data AND in training, THEN a passed forward
-        # shadow test on live prices (see crypto_shadow.py). Until then it sits out entirely.
-        from . import crypto_shadow
-        return "active" if crypto_shadow.backtest_ok(champ) and crypto_shadow.cleared(champ) else "probation"
     enough = h.get("trades", 0) >= max(30, desk.min_trades * 0.35)
     if (champ["holdout_fit"] or 0) >= 0.5 and h.get("total", 0) > 0 and enough:
         return "active"

@@ -20,7 +20,7 @@ STATIC = config.ROOT / "studio"
 PORT = config._i("STUDIO_PORT", 8765)
 HOST = config._s("STUDIO_HOST", "127.0.0.1")          # 0.0.0.0 only behind a private network (e.g. Tailscale)
 PASSWORD = config._s("STUDIO_PASSWORD")               # set this whenever the Studio is reachable from the internet
-IDLE_PREFIXES = ("crypto desk switched off", "crypto desk is switched off", "watching", "market closed", "waiting", "sitting out", "no fresh", "brain found no")
+IDLE_PREFIXES = ("watching", "market closed", "waiting", "sitting out", "no fresh", "brain found no")
 
 _cache = {}
 _cache_lock = threading.Lock()
@@ -87,7 +87,7 @@ def state():
         "now_et": now_et().strftime("%a %b %d · %I:%M %p ET"),
         "market": {"open": clock.get("is_open", False),
                    "next_open": str(clock.get("next_open", "")), "next_close": str(clock.get("next_close", ""))},
-        "paper": config.ALPACA_PAPER, "profile": config.RISK_PROFILE, "crypto_enabled": risk.crypto_enabled(),
+        "paper": config.ALPACA_PAPER, "profile": config.RISK_PROFILE,
         "account": {"equity": eq, "cash": acct.get("cash"),
                     "day_change": (eq / acct["last_equity"] - 1) if eq and acct.get("last_equity") else None,
                     "since_start": (eq / start["equity"] - 1) if eq and start.get("equity") else None},
@@ -199,11 +199,9 @@ def dashboard():
                        "FROM debates ORDER BY id DESC LIMIT 25")
     for x in debates:
         x["pros"], x["cons"] = json.loads(x["pros"] or "[]"), json.loads(x["cons"] or "[]")
-    from . import crypto_shadow
-    crypto_stage = crypto_shadow.stage(brain.champion("crypto"))
     spy_now = (db.one("SELECT spy FROM equity WHERE spy IS NOT NULL ORDER BY ts DESC LIMIT 1") or {}).get("spy")
     return {"account": acct, "start": db.kv_get("start") or {}, "spy_now": spy_now, "desks": desks,
-            "crypto_stage": crypto_stage, "positions": positions,
+            "positions": positions,
             "trades": trades, "decisions": decisions, "debates": debates,
             "llm": llm.usage_summary(1), "llm_available": {t: llm.available(t) for t in ("smart", "fast")},
             "challenger": db.kv_get("challenger_scorecard") or {},
@@ -213,11 +211,6 @@ def dashboard():
 
 # ---------------------------------------------------------------- chat
 DESK_RULES = {
-    "crypto": "Crypto desk rules: trades Bitcoin, Ethereum, Solana and XRP 24/7 on hourly bars with the smallest "
-              "budget in the firm (5% of equity). It only trades when its brain cleared a strict bar on unseen data "
-              "AND the portfolio manager approves AND the Challenger says proceed with at least 70% confidence AND "
-              "research sentiment isn't negative - otherwise it sits out. Each buy gets a protective stop order at "
-              "Alpaca; the bot sells at the target or time limit. The owner can switch it on/off in the Studio.",
     "day": "Day desk rules: trades 9:45am-3:15pm ET on 15-minute bars, every entry is a bracket order (stop-loss + "
            "take-profit at Alpaca), and every position is sold by 3:50pm ET - nothing is held overnight.",
     "swing": "Swing desk rules: decides from daily bars between 9:45am and 3:30pm ET, bracket orders (GTC stop-loss + "
@@ -253,9 +246,6 @@ def _context(aid):
         n = db.one("SELECT COUNT(*) n, SUM(pnl>0) w, SUM(pnl) p FROM positions WHERE desk=? AND status='closed' "
                    "AND genome_id != 'legacy'", (dk,))
         lines.append(DESK_RULES[dk])
-        if dk == "crypto":
-            from . import crypto_shadow
-            lines.append("Crypto training stage right now: " + crypto_shadow.stage(brain.champion("crypto"))["label"])
         lines.append(f"[{dk} desk] brain status {brain.status(champ)}; capital share {risk.sleeves()[dk]:.0%}; "
                      f"live closed trades {n['n']} ({n['w'] or 0} wins, P&L ${n['p'] or 0:,.2f}); backtest on unseen "
                      f"data: {h.get('trades', 0)} trades, {100 * h.get('total', 0):+.1f}%, win rate "
@@ -427,11 +417,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, chat(aid, msg))
             if u.path == "/api/report/new":
                 return self._send(200, new_report())
-            if u.path == "/api/crypto":
-                on = bool(body.get("enabled"))
-                db.kv_set("crypto_enabled", on)
-                db.event("manager", f"Owner switched the crypto desk {'ON' if on else 'OFF'} in the Studio")
-                return self._send(200, {"enabled": on})
             return self._send(404, {"error": "not found"})
         except Exception as e:
             L.warning("POST %s failed: %s", u.path, e)

@@ -119,7 +119,7 @@ PROBATION_SIZE = _f("PROBATION_SIZE", PROFILE["probation"])
 PDT_EQUITY = 25_000.0
 PDT_BUFFER = _f("PDT_BUFFER", 0.02)          # need 2% above $25k before unlocking, so a dip doesn't trip the rule
 SMALL_ACCOUNT_MAX_POSITIONS = {"day": _i("SMALL_MAX_POSITIONS_DAY", 2), "swing": _i("SMALL_MAX_POSITIONS_SWING", 5),
-                               "long": _i("SMALL_MAX_POSITIONS_LONG", 6), "crypto": _i("MAX_POSITIONS_CRYPTO", 2)}
+                               "long": _i("SMALL_MAX_POSITIONS_LONG", 6)}
 AUTO_REALLOCATE = _b("AUTO_REALLOCATE", True)   # manager moves 5%/week of capital toward the best desk
 REPORT_TIMES_ET = _s("REPORT_TIMES_ET", "00:30,08:30,16:30")
 
@@ -147,7 +147,7 @@ class Desk:
     train_symbols: int      # cap on symbols used for evolution (speed / memory)
     min_trades: int         # fewer simulated trades than this = untrustworthy
     evolve_cooldown_min: int
-    periods_per_year: int = 252   # bars per year, for annualizing results (crypto: hourly, 24/7)
+    periods_per_year: int = 252   # bars per year, for annualizing results
     bench: str = "SPY"            # the "market" each stock is compared against
     close_targets: bool = False   # True: a profit target only counts if a bar CLOSES above it (no spike fills)
     holdout_frac: float = 0.25    # most recent share of history kept unseen during training (used to pick champions)
@@ -184,41 +184,8 @@ DESKS = {
         history_days=_i("LONG_HISTORY_DAYS", 2200), train_symbols=700, min_trades=60,
         evolve_cooldown_min=180,
     ),
-    # Crypto: trades 24/7 on hourly bars, smallest budget, and the strictest bar before it may trade at all.
-    "crypto": Desk(
-        name="crypto", title="Crypto", timeframe="1Hour",
-        sleeve=_f("SLEEVE_CRYPTO", 0.05), sleeve_min=0.0, sleeve_max=0.05,
-        max_positions=_i("MAX_POSITIONS_CRYPTO", 2), risk_per_trade=0.004, daily_loss_pct=0.05,
-        cost_per_side=0.0030, hold_range=(2, 48), stop_range=(1.0, 6.0), target_range=(1.0, 10.0),
-        min_stop=0.012, path_len=48, path_step=1, decision_step=1,
-        # 200 trades: a brain can't win by cherry-picking a few perfect moments - it needs a strategy that works
-        # again and again (~70 trades expected in each later slice)
-        history_days=_i("CRYPTO_HISTORY_DAYS", 2200), train_symbols=20, min_trades=_i("CRYPTO_MIN_TRADES", 200),
-        evolve_cooldown_min=60, periods_per_year=24 * 365, bench="BTC/USD", close_targets=True,
-        # learn on the oldest 60% (2021 boom, 2022 crash, 2023-24), pick champions on the next 20%,
-        # then a final exam on the newest 20% that played no part in choosing the brain
-        holdout_frac=0.2, test_frac=0.2, robust_blocks=4, hidden=_i("CRYPTO_HIDDEN", 4),
-    ),
 }
-# Only coins that trade nearly every hour on Alpaca. Others (DOGE, LTC, LINK, AVAX, ...) go 20-40% of hours
-# with no trades there, so their prices are unreliable for both testing and trading.
-CRYPTO_UNIVERSE = _list("CRYPTO_SYMBOLS", "BTC/USD,ETH/USD,SOL/USD,XRP/USD")
-CRYPTO_HISTORY_START = _s("CRYPTO_HISTORY_START", "2021-01-01")   # Alpaca's hourly crypto history begins here
-CRYPTO_TRAIN_EVERY_MIN = _i("CRYPTO_TRAIN_EVERY_MIN", 15)   # how often the lab retrains crypto until it's cleared
-# Rush mode: until a crypto brain passes the strict backtest bar, train crypto nonstop and the other
-# desks every few minutes. Switches itself off (back to the normal pace) as soon as one passes.
-TRAINING_RUSH = _b("TRAINING_RUSH", True)
-RUSH_OTHERS_EVERY_MIN = _i("RUSH_OTHERS_EVERY_MIN", 5)
-# Crypto boost (part of rush mode): bigger, longer crypto runs on a worker pool that stays warm, more candidates
-# checked on unseen data, and a fresh gene pool whenever the search stalls. All 6 physical CPU cores are already
-# in use, so this squeezes more out of the same hardware rather than adding cores.
-CRYPTO_BOOST = _b("CRYPTO_BOOST", True)
-BOOST_POP = _i("BOOST_POP", 96)
-BOOST_GENS = _i("BOOST_GENS", 60)
-BOOST_CANDIDATES = _i("BOOST_CANDIDATES", 16)
-BOOST_STALL_RUNS = _i("BOOST_STALL_RUNS", 30)   # runs without a new champion before the gene pool is shaken up
 LAB_WORKERS = _i("LAB_WORKERS", max(1, min(6, (os.cpu_count() or 2) - 4)))  # CPU cores used for training
-CRYPTO_ENABLED_DEFAULT = _b("CRYPTO_ENABLED", True)   # the Studio toggle overrides this at runtime
 
 
 def validate():

@@ -6,7 +6,6 @@ What gets sent (NOTIFY_EVENTS in .env picks which):
   trade     - a desk opened a position
   close     - a position closed, with its profit/loss
   champion  - a desk's training lab promoted a new champion brain (every time, in plain English)
-  stage     - a crypto brain passed its backtests, passed its shadow test, or lost its clearance
   report    - the 8-hourly report, with the headline numbers (only when trades actually closed)
   warning   - loss limits, size cuts, AI demotions and other warnings
 
@@ -26,7 +25,7 @@ from . import config, log
 L = log.get("notify")
 TOPIC = config._s("NOTIFY_NTFY_TOPIC")
 SERVER = config._s("NOTIFY_NTFY_SERVER", "https://ntfy.sh").rstrip("/")
-EVENTS = {e.lower() for e in config._list("NOTIFY_EVENTS", "trade,close,champion,stage,report,warning")}
+EVENTS = {e.lower() for e in config._list("NOTIFY_EVENTS", "trade,close,champion,report,warning")}
 CLICK_URL = config._s("NOTIFY_CLICK_URL")            # e.g. your Studio's Tailscale address, opened when tapped
 MAX_PER_DAY = config._i("NOTIFY_MAX_PER_DAY", 80)    # ntfy's free tier allows ~250/day; stay well under
 ASK_TOPIC = f"{TOPIC}-ask" if TOPIC else ""         # phone -> bot: questions arrive here
@@ -96,8 +95,6 @@ def on_event(agent: str, msg: str, level: str = "info"):
             send("trade", f"{desk.title()} desk bought", msg[4:])
         elif msg.startswith("CLOSED "):
             send("close", "Position closed", msg[7:])
-        elif "passed shadow testing" in msg or "clearance withdrawn" in msg:      # (new champions: see champion())
-            send("stage", "Crypto desk update", msg)
         elif level in ("warning", "error"):
             send("warning", f"Warning from {agent.replace('_', ' ')}", msg, key=f"warn:{msg[:60]}", cooldown_s=3600)
         elif msg.startswith("capital shifted"):
@@ -111,16 +108,6 @@ def champion(desk, title, h, old_fitness=None, data=None):
     msg = (f"Tested on data it never learned from: {h.get('total', 0) * 100:+.1f}% over {h.get('trades', 0)} trades, "
            f"{h.get('winrate', 0) * 100:.0f}% winners. Quality score {h.get('fitness', 0):.2f}"
            + (f" (the old champion's: {old_fitness:.2f})." if old_fitness is not None else "."))
-    if desk == "crypto" and data is not None:
-        from . import crypto_shadow
-        if not crypto_shadow.val_ok(data):
-            msg += "\nNot good enough to trade yet (needs 30+ trades, 55%+ winners and a score of 1.5+). Training continues."
-        elif not crypto_shadow.test_ok(data):
-            t = data.get("test") or {}
-            msg += (f"\nPassed the first check, but failed the final exam on the newest data "
-                    f"({t.get('total', 0) * 100:+.1f}% over {t.get('trades', 0)} trades), so it won't trade. Training continues.")
-        else:
-            msg += "\nPassed BOTH checks! It now starts a 7-day paper test on live prices before any real trade."
     send("champion", f"New {title} champion brain", msg)
 
 
@@ -143,7 +130,7 @@ def equity_text() -> str:
             return "trading"
         if st == "untrained":
             return "training"
-        return "sitting out (still training)" if d == "crypto" else "trading small"
+        return "trading small"
     desks = ", ".join(f"{d} {word(d)}" for d in config.DESKS)
     return (f"${a['equity']:,.2f}  ({day * 100:+.2f}% today"
             + (f", {since * 100:+.2f}% since the start" if since is not None else "") + ")\n"

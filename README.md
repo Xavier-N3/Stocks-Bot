@@ -98,8 +98,7 @@ name in `.env` (`NOTIFY_NTFY_TOPIC`). You'll get:
 |---|---|
 | Desk bought | a position is opened |
 | Position closed | with its % and $ profit/loss |
-| New champion brain | every time a desk's lab promotes a better brain, in plain English (crypto ones say if it passed its final exam) |
-| Crypto desk update | a crypto brain passes its backtests, passes its shadow test, or loses its clearance |
+| New champion brain | every time a desk's lab promotes a better brain, in plain English |
 | Report | every 8 hours, only if trades closed: equity, today's change, trades and P&L |
 | Warning | loss limits, size cuts, AI demotions, a crashed agent |
 
@@ -108,16 +107,6 @@ replies within seconds. You can also subscribe to `<your topic>-ask` in the app 
 Pick which notifications you get with `NOTIFY_EVENTS`. Test anytime: `.venv\Scripts\python.exe -m trader.notify`.
 Since a stopped bot can't send anything, add a free **healthchecks.io** check URL as `HEALTHCHECK_URL`. It gets
 pinged every 5 minutes and alerts you (by email, or through ntfy too) if the pings stop.
-
-## Crypto desk (switch it on/off in the Studio)
-
-Nova (researcher) and Satoshi (trader) trade **BTC, ETH, SOL and XRP 24/7** on hourly bars from a desk in the lab
-corner. It has the smallest budget (5% of equity, max 2 positions) and the strictest rules in the firm. It only buys
-when its brain beat a high bar on unseen data, the AI portfolio manager approves, the Challenger says *proceed* with
-at least 70% confidence, and research sentiment isn't negative. If no AI is available it doesn't trade. Each buy
-gets a protective stop order at Alpaca; Satoshi sells at the target or time limit. The **₿ Crypto ON/OFF** button
-in the Studio's top bar stops new crypto trades (open ones are still managed until they close). Other coins are
-excluded on purpose: on Alpaca they go 20-40% of hours without a single trade, so their prices are unreliable.
 
 ## Risk profile (`RISK_PROFILE` in `.env`)
 
@@ -155,7 +144,7 @@ If every AI is unavailable, the traders keep trading on the numbers alone (the A
 
 The [`optional/`](optional/README.md) folder holds finished features that are **not active** and not loaded by
 the bot, each with instructions to switch it on later. Right now: a **forex desk** (needs a free OANDA account),
-parked until the account is big enough for forex to make a difference.
+parked until the account is big enough for forex to make a difference, and a **crypto desk** (24/7 BTC/ETH/SOL/XRP).
 
 ## Files
 

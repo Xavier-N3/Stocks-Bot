@@ -42,7 +42,7 @@ def google_news(query: str, limit=8) -> list:
 
 def store_web_news(symbol: str, company: str = "") -> int:
     if "/" in symbol:
-        q = company or symbol.split("/")[0] + " crypto"
+        q = company or symbol
     else:
         q = f'"{symbol}" stock' if not company else f'{company} {symbol} stock'
     items = google_news(q)

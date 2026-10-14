@@ -16,12 +16,6 @@ AGENTS = {
                             bio="Reads SEC filings for fun. Cares about revenue growth, margins and debt."),
     "long_trader": dict(name="Oakley", role="Long-term investor", desk="long", kind="trader", color="#199e70",
                         badge="🌳", bio="Unhurried and steady; thinks in months and rebalances once a week."),
-    "crypto_researcher": dict(name="Nova", role="Crypto researcher", desk="crypto", kind="researcher",
-                              color="#e66767", badge="🪙",
-                              bio="Night owl who never sleeps; watches Bitcoin, Ethereum, Solana and XRP around the clock."),
-    "crypto_trader": dict(name="Satoshi", role="Crypto trader", desk="crypto", kind="trader", color="#e66767",
-                          badge="₿", bio="The most cautious bot in the studio: only trades crypto when every check "
-                                        "agrees with high confidence, and happily sits out otherwise."),
     "challenger": dict(name="Devi", role="The Challenger (devil's advocate)", desk=None, kind="challenger",
                        color="#d55181", badge="⚖️",
                        bio="Friendly but relentless skeptic. Argues both sides of every trade before it is placed."),

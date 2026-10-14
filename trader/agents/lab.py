@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
-from .. import brain, config, db, evolution, features, risk, universe
+from .. import brain, config, db, evolution, features, universe
 from ..broker import Broker
 from .base import Agent
 
@@ -21,53 +21,18 @@ class Lab(Agent):
         super().__init__()
         self.broker = Broker()
         self.cache = {}
-        self.rushing = False
-        self._pool = None          # (dataset, worker pool) kept warm for crypto boost runs
 
     def wait_seconds(self):
-        return 5 if self.rushing else 60
-
-    def _rush(self):
-        """True until a crypto brain passes the strict backtest bar (then it moves on to shadow testing)."""
-        if not config.TRAINING_RUSH or not risk.crypto_enabled():
-            return False
-        from .. import crypto_shadow
-        return crypto_shadow.stage(brain.champion("crypto"))["stage"] == "training"
+        return 60
 
     def step(self):
-        rush = self._rush()
-        if rush != self.rushing:
-            db.event(self.name, ("Crypto boost ON: crypto trains nonstop with bigger, longer runs, other desks every "
-                                 f"{config.RUSH_OTHERS_EVERY_MIN} min, until a crypto brain passes") if rush else
-                                "A crypto brain passed the backtest bar - boost OFF, back to the normal training pace")
-            self.rushing = rush
-            if not rush:
-                self._close_pool()
         for name in config.DESKS:
             if self._data_ready(name) and self._due(name):
                 self._evolve(name)
 
-    def _crypto_pool(self, ds):
-        if self._pool and self._pool[0] is ds:
-            return self._pool[1]
-        self._close_pool()
-        try:
-            self._pool = (ds, evolution.make_pool(ds, config.DESKS["crypto"], config.LAB_WORKERS))
-        except Exception as e:
-            self.log.warning("could not start the crypto worker pool: %s", e)
-            return None
-        return self._pool[1]
-
-    def _close_pool(self):
-        if self._pool:
-            self._pool[1].shutdown(wait=False, cancel_futures=True)
-            self._pool = None
-
     def _data_ready(self, name):
-        if name == "crypto" and not risk.crypto_enabled():
-            return False                   # switched off in the Studio: don't spend CPU on it
         desk = config.DESKS[name]
-        tf, need = {"day": ("15Min", 26 * 20), "crypto": ("1Hour", 24 * 60)}.get(name, ("1Day", 400))
+        tf, need = {"day": ("15Min", 26 * 20)}.get(name, ("1Day", 400))
         r = db.one("SELECT COUNT(*) n FROM bars WHERE symbol=? AND tf=?", (desk.bench, tf))
         return r["n"] >= need
 
@@ -78,10 +43,6 @@ class Lab(Agent):
         if not last:
             return True
         age = datetime.now(timezone.utc) - datetime.fromisoformat(last)
-        if self.rushing:
-            return name == "crypto" or age >= timedelta(minutes=config.RUSH_OTHERS_EVERY_MIN)
-        if name == "crypto" and brain.status(brain.champion("crypto")) != "active":
-            return age >= timedelta(minutes=config.CRYPTO_TRAIN_EVERY_MIN)   # keep training until good enough
         req = db.kv_get(f"evolve_request:{name}")
         if req and req > last and age >= timedelta(minutes=config.DESKS[name].evolve_cooldown_min):
             return True
@@ -89,8 +50,6 @@ class Lab(Agent):
 
     def _symbols(self, name):
         desk = config.DESKS[name]
-        if name == "crypto":
-            return sorted(set(config.CRYPTO_UNIVERSE) | {desk.bench})
         if name == "day":
             rows = db.query("SELECT symbol, COUNT(*) n FROM bars WHERE tf='15Min' GROUP BY symbol HAVING n >= ? "
                             "ORDER BY n DESC", (26 * 15,))
@@ -111,9 +70,6 @@ class Lab(Agent):
             return hit[1]
         since = (datetime.now(timezone.utc) - timedelta(days=desk.history_days)).isoformat()
         bars = db.load_bars(self._symbols(name), desk.timeframe, since)
-        if name == "crypto":
-            from .. import macro
-            macro.update_fng()
         norm = db.kv_get(f"norm:{name}")
         if norm is not None and len(norm[0]) != len(features.feature_names(name)):
             norm = None           # the desk's inputs changed: measure the scaling afresh
@@ -140,49 +96,22 @@ class Lab(Agent):
         champ = brain.champion(name)
         first = champ is None
         market_open = self.broker.clock()["is_open"]
-        boost = name == "crypto" and self.rushing and config.CRYPTO_BOOST
-        budget = 300 if first or boost else (45 if name == "day" and market_open else 150)
-        gens = config.BOOST_GENS if boost else 40 if first else (40 if name == "crypto" else 15)
-        pop_size = config.BOOST_POP if boost else 64 if name == "crypto" else 32
+        budget = 300 if first else (45 if name == "day" and market_open else 150)
+        gens = 40 if first else 15
+        pop_size = 32
         pop = db.kv_get(f"population:{name}")
-        if boost and pop and (db.kv_get("crypto_stall") or 0) >= config.BOOST_STALL_RUNS:
-            pop = pop[:8]          # search is stuck: keep the 8 best brains, fill the rest with fresh random ones
-            db.kv_set("crypto_stall", 0)
-            db.event(self.name, f"[crypto] no progress in {config.BOOST_STALL_RUNS} runs - shaking up the gene pool "
-                                "(keeping the 8 best brains, the rest are brand new)")
         self.activity(f"Breeding {pop_size} {name} brains on {config.LAB_WORKERS} CPU cores, up to {gens} generations "
-                      f"on {len(ds['X']):,} historical setups{' (crypto boost)' if boost else ''}")
+                      f"on {len(ds['X']):,} historical setups")
         t0 = time.time()
-        try:
-            pop, cands, ran = evolution.evolve(ds, desk, pop, gens, pop_size, budget, workers=config.LAB_WORKERS,
-                                               pool=self._crypto_pool(ds) if boost else None,
-                                               n_cands=config.BOOST_CANDIDATES if boost else 6)
-        except Exception:
-            if boost:
-                self._close_pool()     # a broken worker pool gets rebuilt next run
-            raise
+        pop, cands, ran = evolution.evolve(ds, desk, pop, gens, pop_size, budget, workers=config.LAB_WORKERS)
         db.kv_set(f"population:{name}", [np.round(v, 5).tolist() for v in pop])
         best = cands[0]
         champ_h = None
         if champ is not None and len(champ["vec"]) == evolution.n_genes(len(ds["feats"]), desk.hidden):
             champ_h = evolution.simulate(champ["vec"], ds, desk, "holdout")
         margin = 0.05
-        if name == "crypto" and champ is not None:
-            # don't churn: a brain in (or past) its shadow test is only replaced by a clearly better one
-            from .. import crypto_shadow
-            st = crypto_shadow.stage(champ)
-            margin = 0.5 if st["stage"] in ("shadow", "cleared") and st["shadow"]["trades"] >= 3 else 0.25
         promote = champ_h is None or (best["holdout"]["fitness"] > champ_h["fitness"] + margin
                                       and best["holdout"]["trades"] >= 5)
-        if name == "crypto":
-            # A brain that clears the validation bar replaces a champion that doesn't. Picking is done on
-            # validation ONLY - the final exam is taken by the chosen champion alone, so it stays honest.
-            from .. import crypto_shadow
-            passing = [c for c in cands if crypto_shadow.val_ok(c)]
-            if passing and not (champ and crypto_shadow.val_ok(champ)):
-                best, promote = passing[0], True
-        if boost:
-            db.kv_set("crypto_stall", 0 if promote else (db.kv_get("crypto_stall") or 0) + 1)
         note = ""
         if promote:
             gid = f"{name}-{datetime.now(timezone.utc):%Y%m%d%H%M}-{uuid.uuid4().hex[:4]}"
@@ -209,11 +138,6 @@ class Lab(Agent):
             from .. import notify
             notify.champion(name, desk.title.lower(), best["holdout"], champ_h["fitness"] if champ_h else None,
                             dict(data, id=gid))
-            if name == "crypto":
-                from .. import crypto_shadow
-                if crypto_shadow.backtest_ok(dict(data, id=gid)):
-                    db.event(self.name, f"Crypto brain {gid} passed the full backtest bar (validation + final exam) - "
-                                        "starting its 7-day live shadow test, no money used yet")
         else:
             db.execute("UPDATE genomes SET holdout_fit=? WHERE id=?", (champ_h["fitness"], champ["id"]))
             note = (f"champion kept (its unseen-data fitness {champ_h['fitness']:.3f} vs best challenger "

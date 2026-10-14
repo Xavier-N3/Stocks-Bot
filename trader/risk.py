@@ -10,16 +10,10 @@ from .timeutil import now_et
 def sleeves() -> dict:
     s = db.kv_get("sleeves") or {}
     missing = {k: d.sleeve for k, d in config.DESKS.items() if k not in s}
-    if missing:                      # e.g. a desk added later (crypto) gets its default share
+    if missing:                      # e.g. a desk added later gets its default share
         s.update(missing)
         db.kv_set("sleeves", s)
     return s
-
-
-def crypto_enabled() -> bool:
-    """The on/off switch in the Studio."""
-    v = db.kv_get("crypto_enabled")
-    return config.CRYPTO_ENABLED_DEFAULT if v is None else bool(v)
 
 
 def size_mult(desk) -> float:

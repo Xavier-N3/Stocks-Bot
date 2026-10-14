@@ -6,21 +6,18 @@ import json
 import time
 from datetime import datetime, timedelta, timezone
 
-from .. import brain, config, db, features, library, llm, risk, universe, web
+from .. import brain, config, db, features, library, llm, universe, web
 from ..broker import Broker
 from ..marketdata import MarketData
 from ..timeutil import ET, et_minutes, now_et
 from .base import Agent
 
 HORIZON = {"day": "the rest of today's trading session", "swing": "the next 1-4 weeks",
-           "long": "the next 6-12 months", "crypto": "the next 1-48 hours"}
-TOP_N = {"day": 12, "swing": 15, "long": 25, "crypto": 13}
-BRIEF_TTL_MIN = {"day": 45, "swing": 20 * 60, "long": 7 * 24 * 60, "crypto": 120}
-REANALYZE_S = {"day": 3600, "swing": 6 * 3600, "long": 24 * 3600, "crypto": 3 * 3600}
-NEWS_HOURS = {"day": 20, "swing": 72, "long": 168, "crypto": 24}
-COIN_NAMES = {"BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana", "XRP": "XRP Ripple", "DOGE": "Dogecoin",
-              "LTC": "Litecoin", "LINK": "Chainlink", "AVAX": "Avalanche", "ADA": "Cardano", "DOT": "Polkadot",
-              "BCH": "Bitcoin Cash", "UNI": "Uniswap", "AAVE": "Aave"}
+           "long": "the next 6-12 months"}
+TOP_N = {"day": 12, "swing": 15, "long": 25}
+BRIEF_TTL_MIN = {"day": 45, "swing": 20 * 60, "long": 7 * 24 * 60}
+REANALYZE_S = {"day": 3600, "swing": 6 * 3600, "long": 24 * 3600}
+NEWS_HOURS = {"day": 20, "swing": 72, "long": 168}
 
 
 def daily_is_stale() -> bool:
@@ -72,27 +69,11 @@ class Researcher(Agent):
         return self._wait
 
     def step(self):
-        if self.desk.name == "crypto":
-            return self._crypto()
         clock = self.broker.clock()
         if self.desk.name == "day":
             self._day(clock)
         else:
             self._daily(clock)
-
-    # ------------------------------------------------------------ crypto desk (24/7)
-    def _crypto(self):
-        if not risk.crypto_enabled():
-            self._wait = 120
-            self.activity("Crypto desk is switched off (turn it on in the Studio)")
-            return
-        self._wait = 600
-        uni = config.CRYPTO_UNIVERSE
-        self.activity(f"Updating hourly prices for {len(uni)} coins")
-        self.md.update_crypto(uni)
-        market_context(90, self.name)
-        fdf = features.live_features(self.desk, uni)
-        self._research(self._rank(fdf), True)
 
     # ------------------------------------------------------------ day desk
     def _day_universe(self):
@@ -171,8 +152,6 @@ class Researcher(Agent):
             scored = fdf.copy()
             if self.desk.name == "day":
                 scored["quant"] = scored["day_ret"].abs().fillna(0) + scored["gap"].abs().fillna(0)
-            elif self.desk.name == "crypto":
-                scored["quant"] = scored["r168"].fillna(0) + scored["d_ema168"].fillna(0)
             else:
                 scored["quant"] = scored["r60"].fillna(0) + scored["d_sma200"].fillna(0)
             scored = scored.sort_values("quant", ascending=False)
@@ -180,28 +159,12 @@ class Researcher(Agent):
         for sym, r in scored.head(TOP_N[self.desk.name]).iterrows():
             nums = {"price": round(float(r["c"]), 2)}
             keys = (["day_ret", "gap", "d_vwap", "vratio", "rsi"] if self.desk.name == "day"
-                    else ["r1", "r4", "r24", "r168", "d_ema168", "d_ema720", "rsi", "atr", "vol_ratio", "rs24", "rs168"]
-                    if self.desk.name == "crypto"
                     else ["r5", "r20", "r60", "mom12_1", "d_sma200", "d_hi252", "rsi", "atr"])
             for k in keys:
                 v = r.get(k)
                 if v == v and v is not None:
                     nums[k] = round(float(v), 4)
-            if self.desk.name == "crypto":
-                nums.update(self._crypto_context(sym))
             out.append((sym, float(r["quant"]), nums))
-        return out
-
-    def _crypto_context(self, sym):
-        """Positioning & mood for the AI analyst (not brain inputs): perp funding rate and Fear & Greed."""
-        from .. import macro
-        out = {}
-        rate = macro.funding_now().get(sym.split("/")[0])
-        if rate is not None:
-            out["funding_apr_pct"] = round(rate * 24 * 365 * 100, 1)   # hourly rate -> yearly %, + = longs crowded
-        fng = macro.latest_fng()
-        if fng is not None:
-            out["fear_greed_0_100"] = int(fng)
         return out
 
     def _research(self, ranked, live):
@@ -211,14 +174,10 @@ class Researcher(Agent):
         syms = [s for s, _, _ in ranked]
         self.activity(f"Reading news on {', '.join(syms[:6])}{'...' if len(syms) > 6 else ''}")
         self.md.fetch_news(syms, NEWS_HOURS[d])
-        web_every = 1800 if d in ("day", "crypto") else 6 * 3600
+        web_every = 1800 if d == "day" else 6 * 3600
         for s in syms[:8]:
             if time.time() - self.last_web.get(s, 0) > web_every:
-                if "/" in s:     # crypto: search the coin's name, not "BTC/USD stock"
-                    coin = COIN_NAMES.get(s.split("/")[0], s.split("/")[0])
-                    web.store_web_news(s, f"{coin} crypto price")
-                else:
-                    web.store_web_news(s, universe.info(s).get("name", ""))
+                web.store_web_news(s, universe.info(s).get("name", ""))
                 self.last_web[s] = time.time()
         since = (datetime.now(timezone.utc) - timedelta(hours=NEWS_HOURS[d])).isoformat()
         todo, packs = [], {}
@@ -270,10 +229,7 @@ class Researcher(Agent):
                   "headlines are noise or already priced in. Flag concrete risks (earnings date, lawsuits, share "
                   "offerings, guidance cuts, halts). Reply with JSON only.")
         user = (f"Market backdrop: {ctx.get('summary', 'n/a')} (risk {ctx.get('risk', '?')}/5)\n\n"
-                "Numbers: returns are fractions (0.02 = +2%); rsi is scaled -1..1; d_* = distance from that level."
-                + (" Crypto: rN = return over the last N hours; rs* = vs Bitcoin; funding_apr_pct = perpetual-futures "
-                   "funding (large + means crowded longs, a squeeze risk; - means crowded shorts); fear_greed_0_100 "
-                   "= market mood (extremes often mean-revert)." if d == "crypto" else "") + "\n\n"
+                "Numbers: returns are fractions (0.02 = +2%); rsi is scaled -1..1; d_* = distance from that level.\n\n"
                 + "\n\n".join(blocks) +
                 '\n\nFor EVERY stock return: {"stocks": [{"symbol": "X", "sentiment": -1..1, "confidence": 0..1, '
                 '"catalysts": "short", "risks": "short", "summary": "one sentence"}]}')
