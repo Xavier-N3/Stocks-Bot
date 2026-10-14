@@ -1,0 +1,1699 @@
+diff --git a/.env.example b/.env.example
+index 4cd7fa7..e7c9fe5 100644
+--- a/.env.example
++++ b/.env.example
+@@ -72,16 +72,41 @@ STUDIO_HOST=127.0.0.1
+ # Set a password whenever the Studio can be reached from the internet (e.g. through a Cloudflare Tunnel).
+ STUDIO_PASSWORD=
+ 
+-# ---- Training speed ----
+-# LAB_WORKERS=6                 # CPU cores the training lab may use
+-
+-# Long-term desk: max share of equity at risk per position (risk = position size x stop distance).
+-# RISK_PER_TRADE_LONG=0.0125
+-
+-# ---- Phone notifications (free, no account): install the "ntfy" app, tap +, subscribe to your topic ----
+-# Pick a long random topic name - anyone who knows it can read your updates.
+-NOTIFY_NTFY_TOPIC=
+-# NOTIFY_EVENTS=trade,close,champion,report,warning   # remove any you don't want
+-# NOTIFY_MAX_PER_DAY=80
+-# NOTIFY_CLICK_URL=                  # e.g. your Studio's Tailscale address, opened when you tap a notification
+-# HEALTHCHECK_URL=                   # optional free healthchecks.io check: alerts you if the bot STOPS
++# ---- Crypto desk (24/7). The Studio's on/off button overrides CRYPTO_ENABLED while running. ----
++CRYPTO_ENABLED=true
++SLEEVE_CRYPTO=0.05
++MAX_POSITIONS_CRYPTO=2
++# CRYPTO_SYMBOLS=BTC/USD,ETH/USD,SOL/USD,XRP/USD
++
++# ---- Training speed ----
++# LAB_WORKERS=6                 # CPU cores the training lab may use
++# CRYPTO_TRAIN_EVERY_MIN=15     # crypto retrain interval once a brain is in shadow testing
++# Rush mode: until a crypto brain passes the backtest bar, crypto trains nonstop and the other
++# desks every RUSH_OTHERS_EVERY_MIN minutes. Turns itself off once one passes.
++# TRAINING_RUSH=true
++# RUSH_OTHERS_EVERY_MIN=5
++
++# Long-term desk: max share of equity at risk per position (risk = position size x stop distance).
++# RISK_PER_TRADE_LONG=0.0125
++# Crypto boost (while rush mode is on): bigger/longer crypto runs, warm worker pool, more candidates checked,
++# gene pool reshuffled after BOOST_STALL_RUNS runs with no new champion.
++# CRYPTO_BOOST=true
++# BOOST_POP=96
++# BOOST_GENS=60
++# BOOST_CANDIDATES=16
++# BOOST_STALL_RUNS=30
++# Crypto history start (Alpaca hourly crypto data begins 2021-01-01) and how many days the lab trains on.
++# CRYPTO_HISTORY_START=2021-01-01
++# CRYPTO_HISTORY_DAYS=2200
++
++# ---- Phone notifications (free, no account): install the "ntfy" app, tap +, subscribe to your topic ----
++# Pick a long random topic name - anyone who knows it can read your updates.
++NOTIFY_NTFY_TOPIC=
++# NOTIFY_EVENTS=trade,close,champion,stage,report,warning   # remove any you don't want
++# NOTIFY_MAX_PER_DAY=80
++# NOTIFY_CLICK_URL=                  # e.g. your Studio's Tailscale address, opened when you tap a notification
++# HEALTHCHECK_URL=                   # optional free healthchecks.io check: alerts you if the bot STOPS
++# Crypto brain: trades it must make in training (more = no cherry-picking) and hidden-layer size (smaller = less memorizing)
++# CRYPTO_MIN_TRADES=200
++# CRYPTO_HIDDEN=4
++# TRAINING_RUSH=false          # true = strict desks train nonstop until they pass (more luck-hunting)
+diff --git a/README.md b/README.md
+index 8da5c03..8dc5a6f 100644
+--- a/README.md
++++ b/README.md
+@@ -98,7 +98,8 @@ name in `.env` (`NOTIFY_NTFY_TOPIC`). You'll get:
+ |---|---|
+ | Desk bought | a position is opened |
+ | Position closed | with its % and $ profit/loss |
+-| New champion brain | every time a desk's lab promotes a better brain, in plain English |
++| New champion brain | every time a desk's lab promotes a better brain, in plain English (crypto ones say if it passed its final exam) |
++| Crypto desk update | a crypto brain passes its backtests, passes its shadow test, or loses its clearance |
+ | Report | every 8 hours, only if trades closed: equity, today's change, trades and P&L |
+ | Warning | loss limits, size cuts, AI demotions, a crashed agent |
+ 
+@@ -108,6 +109,16 @@ Pick which notifications you get with `NOTIFY_EVENTS`. Test anytime: `.venv\Scri
+ Since a stopped bot can't send anything, add a free **healthchecks.io** check URL as `HEALTHCHECK_URL`. It gets
+ pinged every 5 minutes and alerts you (by email, or through ntfy too) if the pings stop.
+ 
++## Crypto desk (switch it on/off in the Studio)
++
++Nova (researcher) and Satoshi (trader) trade **BTC, ETH, SOL and XRP 24/7** on hourly bars from a desk in the lab
++corner. It has the smallest budget (5% of equity, max 2 positions) and the strictest rules in the firm. It only buys
++when its brain beat a high bar on unseen data, the AI portfolio manager approves, the Challenger says *proceed* with
++at least 70% confidence, and research sentiment isn't negative. If no AI is available it doesn't trade. Each buy
++gets a protective stop order at Alpaca; Satoshi sells at the target or time limit. The **₿ Crypto ON/OFF** button
++in the Studio's top bar stops new crypto trades (open ones are still managed until they close). Other coins are
++excluded on purpose: on Alpaca they go 20-40% of hours without a single trade, so their prices are unreliable.
++
+ ## Risk profile (`RISK_PROFILE` in `.env`)
+ 
+ `conservative`, `balanced` or `aggressive` (this account uses **aggressive**: about 2x the risk per trade,
+@@ -144,7 +155,7 @@ If every AI is unavailable, the traders keep trading on the numbers alone (the A
+ 
+ The [`optional/`](optional/README.md) folder holds finished features that are **not active** and not loaded by
+ the bot, each with instructions to switch it on later. Right now: a **forex desk** (needs a free OANDA account),
+-parked until the account is big enough for forex to make a difference, and a **crypto desk** (24/7 BTC/ETH/SOL/XRP).
++parked until the account is big enough for forex to make a difference.
+ 
+ ## Files
+ 
+diff --git a/run.py b/run.py
+index dfc0d9a..f1d9ea7 100644
+--- a/run.py
++++ b/run.py
+@@ -23,7 +23,7 @@ def make_agents():
+     from trader.agents.trader import Trader
+     from trader.agents.challenger import Challenger
+     return [Researcher("day"), Trader("day"), Researcher("swing"), Trader("swing"),
+-            Researcher("long"), Trader("long"),
++            Researcher("long"), Trader("long"), Researcher("crypto"), Trader("crypto"),
+             Challenger(), Manager(), Lab()]
+ 
+ 
+diff --git a/studio/app.js b/studio/app.js
+index abf07e5..0768f1d 100644
+--- a/studio/app.js
++++ b/studio/app.js
+@@ -9,8 +9,8 @@
+   const dcls = (v) => v == null || Math.abs(v) < 1e-9 ? "" : v > 0 ? "delta-up" : "delta-down";
+   const hhmm = (iso) => { try { return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); } catch { return ""; } };
+   const dt = (iso) => { try { return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); } catch { return iso || ""; } };
+-  const DESK_COLOR = { day: "var(--series-day)", swing: "var(--series-swing)", long: "var(--series-long)" };
+-  const DESK_HEX = { day: "#3987e5", swing: "#d95926", long: "#199e70" };
++  const DESK_COLOR = { day: "var(--series-day)", swing: "var(--series-swing)", long: "var(--series-long)", crypto: "#e66767" };
++  const DESK_HEX = { day: "#3987e5", swing: "#d95926", long: "#199e70", crypto: "#e66767" };
+   const api = async (path, opts) => { const r = await fetch(path, opts); if (!r.ok) throw new Error(r.status); const ct = r.headers.get("content-type") || ""; return ct.includes("json") ? r.json() : r.text(); };
+ 
+   let STATE = null, view = "studio", chatId = null, dashTimer = null, eqRange = "1M", showTable = false, evoSpan = "1D", evoEnd = null;
+@@ -35,6 +35,9 @@
+     } catch (e) { $("#market").textContent = "offline"; $("#market").className = "pill closed"; }
+   }
+   function renderTop(st) {
++    const ct = $("#crypto-toggle");
++    ct.textContent = `₿ Crypto ${st.crypto_enabled ? "ON" : "OFF"}`; ct.className = "pill toggle " + (st.crypto_enabled ? "on" : "off");
++    ct.dataset.on = st.crypto_enabled ? "1" : "";
+     $("#paper").style.display = st.paper ? "" : "none";
+     $("#paper").textContent = st.paper ? `PAPER · ${String(st.profile || "").toUpperCase()}` : "LIVE";
+     $("#market").textContent = st.market.open ? "Market open" : "Market closed";
+@@ -197,7 +200,7 @@
+ 
+       ${d.desks.map((x) => {
+         const used = x.capital ? Math.min(1, x.invested / x.capital) : 0, b = x.backtest || {};
+-        return `<div class="card desk-card span-4"><h3><span class="tag"><i style="background:${DESK_COLOR[x.id]}"></i>${esc(x.title)}</span><span class="status-pill ${x.brain}">${x.brain}</span></h3>
++        return `<div class="card desk-card span-3"><h3><span class="tag"><i style="background:${DESK_COLOR[x.id]}"></i>${esc(x.title)}</span><span class="status-pill ${x.brain}">${x.id === "crypto" && x.brain === "probation" ? "sitting out" : x.brain}</span></h3>
+           <div class="muted" style="font-size:12px">Invested ${money(x.invested, 0)} of ${money(x.capital, 0)} (${Math.round(x.sleeve * 100)}% of equity${x.size_mult !== 1 ? `, size ×${x.size_mult}` : ""})</div>
+           <div class="bar"><i style="width:${used * 100}%;background:${DESK_COLOR[x.id]}"></i></div>
+           <dl><dt>Open positions</dt><dd>${x.positions} / ${x.max_positions}</dd>
+@@ -205,7 +208,7 @@
+           <dt>Realized P&amp;L</dt><dd>${money(x.realized)}</dd><dt>Unrealized P&amp;L</dt><dd>${money(x.unrealized)}</dd>
+           <dt>Backtest on unseen data</dt><dd>${b.trades ? `${pct(b.total, 1)} · ${b.trades} trades · ${Math.round(100 * (b.winrate || 0))}% wins` : "—"}</dd>
+           <dt>AI veto · Challenger</dt><dd>${esc(x.llm_mode)} · ${esc(x.challenger_mode)}</dd></dl>
+-          </div>`;
++          ${x.id === "crypto" && d.crypto_stage ? `<div class="muted" style="font-size:12px;margin-top:8px;line-height:1.4"><b style="color:var(--text-secondary)">Stage:</b> ${esc(d.crypto_stage.label)}</div>` : ""}</div>`;
+       }).join("")}
+ 
+       <div class="card span-7"><h3>Open positions <small>${d.positions.length} held</small></h3><div class="scroll"><table>
+@@ -237,7 +240,7 @@
+         <p class="muted" style="font-size:12px;margin:6px 0 0">Each dot = the best brain score a desk reached in that time slot (big filled dot = a new champion was promoted). Higher = better risk-adjusted results on data the brains never trained on. Drag the chart sideways or use ◀ Older to look back.</p></div>
+       <div class="card span-4"><h3>Are the AI filters helping? <small>avg price move after the decision</small></h3><table>
+         <tr><th>Desk</th><th class="r">Bought</th><th class="r">PM vetoed</th><th class="r">Challenger rejected</th></tr>
+-        ${["day", "swing", "long"].map((k) => { const x = dec[k] || {}; const f = (r) => r ? `${r.n} · ${r.a == null ? "pending" : pct(r.a)}` : "0"; return `<tr><td><span class="tag"><i style="background:${DESK_COLOR[k]}"></i>${k}</span></td><td class="r">${f(x.buy)}</td><td class="r">${f(x.veto)}</td><td class="r">${f(x.challenged)}</td></tr>`; }).join("")}
++        ${["day", "swing", "long", "crypto"].map((k) => { const x = dec[k] || {}; const f = (r) => r ? `${r.n} · ${r.a == null ? "pending" : pct(r.a)}` : "0"; return `<tr><td><span class="tag"><i style="background:${DESK_COLOR[k]}"></i>${k}</span></td><td class="r">${f(x.buy)}</td><td class="r">${f(x.veto)}</td><td class="r">${f(x.challenged)}</td></tr>`; }).join("")}
+       </table><p class="muted" style="font-size:12px">If rejected stocks keep beating bought ones, the manager automatically takes the AI's veto power away.</p></div>`;
+ 
+     document.querySelectorAll("#rng button").forEach((b) => b.addEventListener("click", () => { eqRange = b.dataset.r; document.querySelectorAll("#rng button").forEach((x) => x.classList.toggle("on", x === b)); drawEquity(); }));
+@@ -261,7 +264,7 @@
+     const fmtFull = (t) => new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+     $("#evo-range").textContent = `${fmtFull(t0)} – ${d.has_newer ? fmtFull(t1) : "now"}`;
+     $("#evo-old").disabled = !d.has_older; $("#evo-new").disabled = !d.has_newer; $("#evo-latest").disabled = !d.has_newer;
+-    const desks = ["day", "swing", "long"].filter((k) => d.points.some((p) => p.desk === k));
++    const desks = ["day", "swing", "long", "crypto"].filter((k) => d.points.some((p) => p.desk === k));
+     holder.innerHTML = `<div class="legend">${desks.map((k) => `<span><i style="background:${DESK_HEX[k]}"></i>${k[0].toUpperCase() + k.slice(1)}</span>`).join("")}</div>
+       <div class="chart"><canvas style="cursor:grab"></canvas><div class="tip"></div></div>`;
+     const cv = $("canvas", holder), tip = $(".tip", holder), dpr = Math.min(2, devicePixelRatio || 1);
+@@ -379,6 +382,13 @@
+ 
+   document.querySelectorAll(".roster .card-h, .feed .card-h").forEach((h) => h.addEventListener("click", () => h.parentElement.classList.toggle("collapsed")));
+ 
++  $("#crypto-toggle").addEventListener("click", async () => {
++    const turnOn = !$("#crypto-toggle").dataset.on;
++    if (!turnOn && !confirm("Switch the crypto desk OFF? It stops opening new crypto trades (any open ones are still managed until they close).")) return;
++    try { await api("/api/crypto", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: turnOn }) }); } catch {}
++    poll();
++  });
++
+   // ------------------------------------------------------------------ boot
+   World.init($("#world"), { onBot: openChat, onBoard: () => setView("dashboard"), onShelf: () => setView("reports") }).then(() => {
+     poll(); setInterval(poll, 4000);
+diff --git a/studio/index.html b/studio/index.html
+index c8941d7..d58de49 100644
+--- a/studio/index.html
++++ b/studio/index.html
+@@ -18,6 +18,7 @@
+     <button class="tab" data-view="reports" role="tab">Reports</button>
+   </nav>
+   <div class="status">
++    <button id="crypto-toggle" class="pill toggle" title="Switch the crypto desk on or off">₿ Crypto …</button>
+     <span id="paper" class="pill paper">PAPER</span>
+     <span id="market" class="pill">…</span>
+     <span id="clock" class="muted"></span>
+diff --git a/studio/style.css b/studio/style.css
+index 159d125..691fe60 100644
+--- a/studio/style.css
++++ b/studio/style.css
+@@ -39,6 +39,11 @@ button, input { font: inherit; color: inherit; }
+ .status { margin-left: auto; display: flex; align-items: center; gap: 12px; white-space: nowrap; }
+ .pill { padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; border: 1px solid var(--line); background: var(--surface-1); }
+ .pill.paper { color: var(--accent); }
++.pill.toggle { cursor: pointer; color: var(--text-secondary); }
++.pill.toggle.on { color: #f4ead9; border-color: #e66767; background: rgba(230,103,103,.18); }
++.pill.toggle.on::before { content: "● "; color: var(--good); }
++.pill.toggle.off::before { content: "○ "; color: var(--text-muted); }
++.pill.toggle:hover { border-color: var(--accent); }
+ .pill.open::before { content: "● "; color: var(--good); }
+ .pill.closed::before { content: "● "; color: var(--text-muted); }
+ .equity { display: flex; align-items: baseline; gap: 6px; }
+diff --git a/studio/world.js b/studio/world.js
+index 32dd3aa..3f2933f 100644
+--- a/studio/world.js
++++ b/studio/world.js
+@@ -75,10 +75,12 @@
+   add("cooler", 41, 3, 1, 1); add("sidebench", 38, 12, 3, 1);
+ 
+   // lab
++  add("rug", 12.4, 7.3, 5.8, 3.4, { color: "#e66767", label: "CRYPTO · 24/7" }, false);
+   for (const [x, y] of [[3, 4], [8, 4], [13, 4], [3, 8], [13, 8]]) {
+-    add("desk", x, y, 4, 1, { lab: true });
+-    screens.push({ x: x + 0.3, y: y + 0.08, w: 1.5, h: 0.45, kind: "code", color: "#c98500" });
+-    screens.push({ x: x + 2.1, y: y + 0.08, w: 1.5, h: 0.45, kind: x === 8 ? "evo" : "code", color: "#c98500" });
++    const crypto = x === 13 && y === 8;          // the crypto desk lives in the lab corner
++    add("desk", x, y, 4, 1, { lab: !crypto });
++    screens.push({ x: x + 0.3, y: y + 0.08, w: 1.5, h: 0.45, kind: crypto ? "chart" : "code", color: crypto ? "#e66767" : "#c98500" });
++    screens.push({ x: x + 2.1, y: y + 0.08, w: 1.5, h: 0.45, kind: crypto ? "chart" : x === 8 ? "evo" : "code", color: crypto ? "#e66767" : "#c98500" });
+     lights.push({ x: x + 2, y: y + 0.6, r: 2.6, color: "255,200,120", kind: "screen" });
+   }
+   add("rack", 1, 10, 2, 4); add("whiteboard", 7, 1, 6, 1, { text: "neural" });
+@@ -140,9 +142,11 @@
+     swing_researcher: P(30, 5, "s"), swing_trader: P(31, 8, "n"),
+     long_researcher: P(37, 5, "s"), long_trader: P(38, 8, "n"),
+     manager: P(50, 4, "s"), lab: P(9, 5, "n"), challenger: P(52, 20, "w"),
++    crypto_researcher: P(14, 9, "n"), crypto_trader: P(15, 9, "n"),
+   };
+   // the desk monitors face the sitter: researchers sit north of their pod facing south, etc.
+-  const HANDOFF = { day: P(22, 9, "e", false), swing: P(29, 9, "e", false), long: P(36, 9, "e", false) };
++  const HANDOFF = { day: P(22, 9, "e", false), swing: P(29, 9, "e", false), long: P(36, 9, "e", false),
++    crypto: P(16, 10, "w", false) };
+   const POI = {
+     coffee: [P(12, 17, "n", false, "coffee")], fridge: [P(14, 18, "n", false)],
+     stools: [P(5, 23, "n"), P(7, 23, "n"), P(9, 23, "n"), P(10, 23, "n")],
+@@ -178,7 +182,8 @@
+     ["Reading any good filings?", "Margins look healthy on a few."], ["Thinking about the Fed…", "Aren't we all."],
+   ];
+   const CHAIR_COL = { day_researcher: "#2f5f9e", day_trader: "#2f5f9e", swing_researcher: "#9e4a26", swing_trader: "#9e4a26",
+-    long_researcher: "#1f6e52", long_trader: "#1f6e52", manager: "#5b4a8a", lab: "#7a5a1a" };
++    long_researcher: "#1f6e52", long_trader: "#1f6e52", manager: "#5b4a8a", lab: "#7a5a1a",
++    crypto_researcher: "#8a3a3a", crypto_trader: "#8a3a3a" };
+   for (const [id, p] of Object.entries(HOME)) {
+     solid[p.y][p.x] = 0;
+     if (CHAIR_COL[id]) items.push({ kind: "chair", x: p.x, y: p.y, w: 1, h: 1, face: p.face, color: CHAIR_COL[id] });
+@@ -510,6 +515,13 @@
+     const tick = scene.tickers || "Researchers are warming up…  ", tw = c.measureText(tick).width + 60, off = (t * 40) % tw;
+     for (let k = -1; k < 3; k++) c.fillText(tick, X + w - off + k * tw - w, Y + 34);
+     c.restore();
++    // crypto desk "closed" sign when switched off in the Studio
++    if (scene.cryptoOn === false) {
++      const sx = 13 * T + 34, sy = 8 * T - 6;
++      c.fillStyle = "rgba(28,23,20,.92)"; rr(c, sx, sy, 60, 20, 6); c.fill();
++      c.strokeStyle = "#e66767"; c.lineWidth = 1.5; c.stroke();
++      c.font = `800 10px ${FONT}`; c.fillStyle = "#e66767"; c.textAlign = "center"; c.fillText("OFF", sx + 30, sy + 14); c.textAlign = "left";
++    }
+     // living-room TV
+     const tv = items.find((i) => i.kind === "tv"); const tx = tv.x * T + 18, ty = tv.y * T + 10, th = tv.h * T - 20;
+     c.fillStyle = C.screen; c.fillRect(tx, ty, 10, th);
+@@ -943,10 +955,11 @@
+     for (const a of st.agents) if (!bots.has(a.id)) bots.set(a.id, makeBot(a)); else bots.get(a.id).a = a;
+     scene.spy = st.spy; scene.equity = st.account?.equity; scene.open = st.market?.open;
+     const ho = st.signals?.handoff || {};
+-    scene.tickers = ["day", "swing", "long"].map((d) => ho[d]?.symbols?.length ? `${d.toUpperCase()}: ${ho[d].symbols.join(" · ")}` : "").filter(Boolean).join("     ✦     ") + "     ✦     ";
++    scene.cryptoOn = st.crypto_enabled !== false;
++    scene.tickers = ["day", "swing", "long", "crypto"].map((d) => ho[d]?.symbols?.length ? `${d.toUpperCase()}: ${ho[d].symbols.join(" · ")}` : "").filter(Boolean).join("     ✦     ") + "     ✦     ";
+     const s = st.signals || {};
+     if (prevSig) {
+-      for (const d of ["day", "swing", "long"]) {
++      for (const d of ["day", "swing", "long", "crypto"]) {
+         if (s.handoff?.[d]?.at && s.handoff[d].at !== prevSig.handoff?.[d]?.at) {
+           const r = bots.get(`${d}_researcher`), tr = bots.get(`${d}_trader`);
+           if (r && !r.chatting) r.queue.unshift({ poi: HANDOFF[d], dwell: 5, bubble: `📄 Briefs: ${s.handoff[d].symbols.join(", ")}`, then: () => tr && say(tr, "Thanks! Reading them now 👀", 4) });
+diff --git a/trader/agents/lab.py b/trader/agents/lab.py
+index 71d380a..eb534ca 100644
+--- a/trader/agents/lab.py
++++ b/trader/agents/lab.py
+@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
+ 
+ import numpy as np
+ 
+-from .. import brain, config, db, evolution, features, universe
++from .. import brain, config, db, evolution, features, risk, universe
+ from ..broker import Broker
+ from .base import Agent
+ 
+@@ -21,18 +21,53 @@ class Lab(Agent):
+         super().__init__()
+         self.broker = Broker()
+         self.cache = {}
++        self.rushing = False
++        self._pool = None          # (dataset, worker pool) kept warm for crypto boost runs
+ 
+     def wait_seconds(self):
+-        return 60
++        return 5 if self.rushing else 60
++
++    def _rush(self):
++        """True until a crypto brain passes the strict backtest bar (then it moves on to shadow testing)."""
++        if not config.TRAINING_RUSH or not risk.crypto_enabled():
++            return False
++        from .. import crypto_shadow
++        return crypto_shadow.stage(brain.champion("crypto"))["stage"] == "training"
+ 
+     def step(self):
++        rush = self._rush()
++        if rush != self.rushing:
++            db.event(self.name, ("Crypto boost ON: crypto trains nonstop with bigger, longer runs, other desks every "
++                                 f"{config.RUSH_OTHERS_EVERY_MIN} min, until a crypto brain passes") if rush else
++                                "A crypto brain passed the backtest bar - boost OFF, back to the normal training pace")
++            self.rushing = rush
++            if not rush:
++                self._close_pool()
+         for name in config.DESKS:
+             if self._data_ready(name) and self._due(name):
+                 self._evolve(name)
+ 
++    def _crypto_pool(self, ds):
++        if self._pool and self._pool[0] is ds:
++            return self._pool[1]
++        self._close_pool()
++        try:
++            self._pool = (ds, evolution.make_pool(ds, config.DESKS["crypto"], config.LAB_WORKERS))
++        except Exception as e:
++            self.log.warning("could not start the crypto worker pool: %s", e)
++            return None
++        return self._pool[1]
++
++    def _close_pool(self):
++        if self._pool:
++            self._pool[1].shutdown(wait=False, cancel_futures=True)
++            self._pool = None
++
+     def _data_ready(self, name):
++        if name == "crypto" and not risk.crypto_enabled():
++            return False                   # switched off in the Studio: don't spend CPU on it
+         desk = config.DESKS[name]
+-        tf, need = {"day": ("15Min", 26 * 20)}.get(name, ("1Day", 400))
++        tf, need = {"day": ("15Min", 26 * 20), "crypto": ("1Hour", 24 * 60)}.get(name, ("1Day", 400))
+         r = db.one("SELECT COUNT(*) n FROM bars WHERE symbol=? AND tf=?", (desk.bench, tf))
+         return r["n"] >= need
+ 
+@@ -43,6 +78,10 @@ class Lab(Agent):
+         if not last:
+             return True
+         age = datetime.now(timezone.utc) - datetime.fromisoformat(last)
++        if self.rushing:
++            return name == "crypto" or age >= timedelta(minutes=config.RUSH_OTHERS_EVERY_MIN)
++        if name == "crypto" and brain.status(brain.champion("crypto")) != "active":
++            return age >= timedelta(minutes=config.CRYPTO_TRAIN_EVERY_MIN)   # keep training until good enough
+         req = db.kv_get(f"evolve_request:{name}")
+         if req and req > last and age >= timedelta(minutes=config.DESKS[name].evolve_cooldown_min):
+             return True
+@@ -50,6 +89,8 @@ class Lab(Agent):
+ 
+     def _symbols(self, name):
+         desk = config.DESKS[name]
++        if name == "crypto":
++            return sorted(set(config.CRYPTO_UNIVERSE) | {desk.bench})
+         if name == "day":
+             rows = db.query("SELECT symbol, COUNT(*) n FROM bars WHERE tf='15Min' GROUP BY symbol HAVING n >= ? "
+                             "ORDER BY n DESC", (26 * 15,))
+@@ -70,6 +111,9 @@ class Lab(Agent):
+             return hit[1]
+         since = (datetime.now(timezone.utc) - timedelta(days=desk.history_days)).isoformat()
+         bars = db.load_bars(self._symbols(name), desk.timeframe, since)
++        if name == "crypto":
++            from .. import macro
++            macro.update_fng()
+         norm = db.kv_get(f"norm:{name}")
+         if norm is not None and len(norm[0]) != len(features.feature_names(name)):
+             norm = None           # the desk's inputs changed: measure the scaling afresh
+@@ -96,22 +140,49 @@ class Lab(Agent):
+         champ = brain.champion(name)
+         first = champ is None
+         market_open = self.broker.clock()["is_open"]
+-        budget = 300 if first else (45 if name == "day" and market_open else 150)
+-        gens = 40 if first else 15
+-        pop_size = 32
++        boost = name == "crypto" and self.rushing and config.CRYPTO_BOOST
++        budget = 300 if first or boost else (45 if name == "day" and market_open else 150)
++        gens = config.BOOST_GENS if boost else 40 if first else (40 if name == "crypto" else 15)
++        pop_size = config.BOOST_POP if boost else 64 if name == "crypto" else 32
+         pop = db.kv_get(f"population:{name}")
++        if boost and pop and (db.kv_get("crypto_stall") or 0) >= config.BOOST_STALL_RUNS:
++            pop = pop[:8]          # search is stuck: keep the 8 best brains, fill the rest with fresh random ones
++            db.kv_set("crypto_stall", 0)
++            db.event(self.name, f"[crypto] no progress in {config.BOOST_STALL_RUNS} runs - shaking up the gene pool "
++                                "(keeping the 8 best brains, the rest are brand new)")
+         self.activity(f"Breeding {pop_size} {name} brains on {config.LAB_WORKERS} CPU cores, up to {gens} generations "
+-                      f"on {len(ds['X']):,} historical setups")
++                      f"on {len(ds['X']):,} historical setups{' (crypto boost)' if boost else ''}")
+         t0 = time.time()
+-        pop, cands, ran = evolution.evolve(ds, desk, pop, gens, pop_size, budget, workers=config.LAB_WORKERS)
++        try:
++            pop, cands, ran = evolution.evolve(ds, desk, pop, gens, pop_size, budget, workers=config.LAB_WORKERS,
++                                               pool=self._crypto_pool(ds) if boost else None,
++                                               n_cands=config.BOOST_CANDIDATES if boost else 6)
++        except Exception:
++            if boost:
++                self._close_pool()     # a broken worker pool gets rebuilt next run
++            raise
+         db.kv_set(f"population:{name}", [np.round(v, 5).tolist() for v in pop])
+         best = cands[0]
+         champ_h = None
+         if champ is not None and len(champ["vec"]) == evolution.n_genes(len(ds["feats"]), desk.hidden):
+             champ_h = evolution.simulate(champ["vec"], ds, desk, "holdout")
+         margin = 0.05
++        if name == "crypto" and champ is not None:
++            # don't churn: a brain in (or past) its shadow test is only replaced by a clearly better one
++            from .. import crypto_shadow
++            st = crypto_shadow.stage(champ)
++            margin = 0.5 if st["stage"] in ("shadow", "cleared") and st["shadow"]["trades"] >= 3 else 0.25
+         promote = champ_h is None or (best["holdout"]["fitness"] > champ_h["fitness"] + margin
+                                       and best["holdout"]["trades"] >= 5)
++        if name == "crypto":
++            # A brain that clears the validation bar replaces a champion that doesn't. Picking is done on
++            # validation ONLY - the final exam is taken by the chosen champion alone, so it stays honest.
++            from .. import crypto_shadow
++            passing = [c for c in cands if crypto_shadow.val_ok(c)]
++            if passing and not (champ and crypto_shadow.val_ok(champ)):
++                best, promote = passing[0], True
++        if boost:
++            db.kv_set("crypto_stall", 0 if promote else (db.kv_get("crypto_stall") or 0) + 1)
+         note = ""
+         if promote:
+             gid = f"{name}-{datetime.now(timezone.utc):%Y%m%d%H%M}-{uuid.uuid4().hex[:4]}"
+@@ -138,6 +209,11 @@ class Lab(Agent):
+             from .. import notify
+             notify.champion(name, desk.title.lower(), best["holdout"], champ_h["fitness"] if champ_h else None,
+                             dict(data, id=gid))
++            if name == "crypto":
++                from .. import crypto_shadow
++                if crypto_shadow.backtest_ok(dict(data, id=gid)):
++                    db.event(self.name, f"Crypto brain {gid} passed the full backtest bar (validation + final exam) - "
++                                        "starting its 7-day live shadow test, no money used yet")
+         else:
+             db.execute("UPDATE genomes SET holdout_fit=? WHERE id=?", (champ_h["fitness"], champ["id"]))
+             note = (f"champion kept (its unseen-data fitness {champ_h['fitness']:.3f} vs best challenger "
+diff --git a/trader/agents/manager.py b/trader/agents/manager.py
+index cfefd8d..a48f80c 100644
+--- a/trader/agents/manager.py
++++ b/trader/agents/manager.py
+@@ -13,7 +13,7 @@ from ..marketdata import MarketData
+ from ..timeutil import ET, hhmm, now_et
+ from .base import Agent
+ 
+-FOLLOWUP_HOURS = {"day": 6, "swing": 24 * 7, "long": 24 * 30}
++FOLLOWUP_HOURS = {"day": 6, "swing": 24 * 7, "long": 24 * 30, "crypto": 24}
+ 
+ 
+ def grade(r_mult):
+@@ -71,7 +71,7 @@ class Manager(Agent):
+     def _review_closed(self):
+         for p in db.query("SELECT * FROM positions WHERE status='closed' AND reviewed=0 ORDER BY exit_time LIMIT 10"):
+             desk = config.DESKS[p["desk"]]
+-            tf = {"day": "15Min"}.get(p["desk"], "1Day")
++            tf = {"day": "15Min", "crypto": "1Hour"}.get(p["desk"], "1Day")
+             entry_t = datetime.fromisoformat(p["entry_time"])
+             exit_t = datetime.fromisoformat(p["exit_time"])
+             bench = config.DESKS[p["desk"]].bench
+diff --git a/trader/agents/researcher.py b/trader/agents/researcher.py
+index e98f603..f8ab423 100644
+--- a/trader/agents/researcher.py
++++ b/trader/agents/researcher.py
+@@ -6,18 +6,21 @@ import json
+ import time
+ from datetime import datetime, timedelta, timezone
+ 
+-from .. import brain, config, db, features, library, llm, universe, web
++from .. import brain, config, db, features, library, llm, risk, universe, web
+ from ..broker import Broker
+ from ..marketdata import MarketData
+ from ..timeutil import ET, et_minutes, now_et
+ from .base import Agent
+ 
+ HORIZON = {"day": "the rest of today's trading session", "swing": "the next 1-4 weeks",
+-           "long": "the next 6-12 months"}
+-TOP_N = {"day": 12, "swing": 15, "long": 25}
+-BRIEF_TTL_MIN = {"day": 45, "swing": 20 * 60, "long": 7 * 24 * 60}
+-REANALYZE_S = {"day": 3600, "swing": 6 * 3600, "long": 24 * 3600}
+-NEWS_HOURS = {"day": 20, "swing": 72, "long": 168}
++           "long": "the next 6-12 months", "crypto": "the next 1-48 hours"}
++TOP_N = {"day": 12, "swing": 15, "long": 25, "crypto": 13}
++BRIEF_TTL_MIN = {"day": 45, "swing": 20 * 60, "long": 7 * 24 * 60, "crypto": 120}
++REANALYZE_S = {"day": 3600, "swing": 6 * 3600, "long": 24 * 3600, "crypto": 3 * 3600}
++NEWS_HOURS = {"day": 20, "swing": 72, "long": 168, "crypto": 24}
++COIN_NAMES = {"BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana", "XRP": "XRP Ripple", "DOGE": "Dogecoin",
++              "LTC": "Litecoin", "LINK": "Chainlink", "AVAX": "Avalanche", "ADA": "Cardano", "DOT": "Polkadot",
++              "BCH": "Bitcoin Cash", "UNI": "Uniswap", "AAVE": "Aave"}
+ 
+ 
+ def daily_is_stale() -> bool:
+@@ -69,12 +72,28 @@ class Researcher(Agent):
+         return self._wait
+ 
+     def step(self):
++        if self.desk.name == "crypto":
++            return self._crypto()
+         clock = self.broker.clock()
+         if self.desk.name == "day":
+             self._day(clock)
+         else:
+             self._daily(clock)
+ 
++    # ------------------------------------------------------------ crypto desk (24/7)
++    def _crypto(self):
++        if not risk.crypto_enabled():
++            self._wait = 120
++            self.activity("Crypto desk is switched off (turn it on in the Studio)")
++            return
++        self._wait = 600
++        uni = config.CRYPTO_UNIVERSE
++        self.activity(f"Updating hourly prices for {len(uni)} coins")
++        self.md.update_crypto(uni)
++        market_context(90, self.name)
++        fdf = features.live_features(self.desk, uni)
++        self._research(self._rank(fdf), True)
++
+     # ------------------------------------------------------------ day desk
+     def _day_universe(self):
+         trad = self.md.tradable()
+@@ -152,6 +171,8 @@ class Researcher(Agent):
+             scored = fdf.copy()
+             if self.desk.name == "day":
+                 scored["quant"] = scored["day_ret"].abs().fillna(0) + scored["gap"].abs().fillna(0)
++            elif self.desk.name == "crypto":
++                scored["quant"] = scored["r168"].fillna(0) + scored["d_ema168"].fillna(0)
+             else:
+                 scored["quant"] = scored["r60"].fillna(0) + scored["d_sma200"].fillna(0)
+             scored = scored.sort_values("quant", ascending=False)
+@@ -159,14 +180,30 @@ class Researcher(Agent):
+         for sym, r in scored.head(TOP_N[self.desk.name]).iterrows():
+             nums = {"price": round(float(r["c"]), 2)}
+             keys = (["day_ret", "gap", "d_vwap", "vratio", "rsi"] if self.desk.name == "day"
++                    else ["r1", "r4", "r24", "r168", "d_ema168", "d_ema720", "rsi", "atr", "vol_ratio", "rs24", "rs168"]
++                    if self.desk.name == "crypto"
+                     else ["r5", "r20", "r60", "mom12_1", "d_sma200", "d_hi252", "rsi", "atr"])
+             for k in keys:
+                 v = r.get(k)
+                 if v == v and v is not None:
+                     nums[k] = round(float(v), 4)
++            if self.desk.name == "crypto":
++                nums.update(self._crypto_context(sym))
+             out.append((sym, float(r["quant"]), nums))
+         return out
+ 
++    def _crypto_context(self, sym):
++        """Positioning & mood for the AI analyst (not brain inputs): perp funding rate and Fear & Greed."""
++        from .. import macro
++        out = {}
++        rate = macro.funding_now().get(sym.split("/")[0])
++        if rate is not None:
++            out["funding_apr_pct"] = round(rate * 24 * 365 * 100, 1)   # hourly rate -> yearly %, + = longs crowded
++        fng = macro.latest_fng()
++        if fng is not None:
++            out["fear_greed_0_100"] = int(fng)
++        return out
++
+     def _research(self, ranked, live):
+         if not ranked:
+             return
+@@ -174,10 +211,14 @@ class Researcher(Agent):
+         syms = [s for s, _, _ in ranked]
+         self.activity(f"Reading news on {', '.join(syms[:6])}{'...' if len(syms) > 6 else ''}")
+         self.md.fetch_news(syms, NEWS_HOURS[d])
+-        web_every = 1800 if d == "day" else 6 * 3600
++        web_every = 1800 if d in ("day", "crypto") else 6 * 3600
+         for s in syms[:8]:
+             if time.time() - self.last_web.get(s, 0) > web_every:
+-                web.store_web_news(s, universe.info(s).get("name", ""))
++                if "/" in s:     # crypto: search the coin's name, not "BTC/USD stock"
++                    coin = COIN_NAMES.get(s.split("/")[0], s.split("/")[0])
++                    web.store_web_news(s, f"{coin} crypto price")
++                else:
++                    web.store_web_news(s, universe.info(s).get("name", ""))
+                 self.last_web[s] = time.time()
+         since = (datetime.now(timezone.utc) - timedelta(hours=NEWS_HOURS[d])).isoformat()
+         todo, packs = [], {}
+@@ -229,7 +270,10 @@ class Researcher(Agent):
+                   "headlines are noise or already priced in. Flag concrete risks (earnings date, lawsuits, share "
+                   "offerings, guidance cuts, halts). Reply with JSON only.")
+         user = (f"Market backdrop: {ctx.get('summary', 'n/a')} (risk {ctx.get('risk', '?')}/5)\n\n"
+-                "Numbers: returns are fractions (0.02 = +2%); rsi is scaled -1..1; d_* = distance from that level.\n\n"
++                "Numbers: returns are fractions (0.02 = +2%); rsi is scaled -1..1; d_* = distance from that level."
++                + (" Crypto: rN = return over the last N hours; rs* = vs Bitcoin; funding_apr_pct = perpetual-futures "
++                   "funding (large + means crowded longs, a squeeze risk; - means crowded shorts); fear_greed_0_100 "
++                   "= market mood (extremes often mean-revert)." if d == "crypto" else "") + "\n\n"
+                 + "\n\n".join(blocks) +
+                 '\n\nFor EVERY stock return: {"stocks": [{"symbol": "X", "sentiment": -1..1, "confidence": 0..1, '
+                 '"catalysts": "short", "risks": "short", "summary": "one sentence"}]}')
+diff --git a/trader/agents/trader.py b/trader/agents/trader.py
+index ef7bd58..46e32d6 100644
+--- a/trader/agents/trader.py
++++ b/trader/agents/trader.py
+@@ -9,12 +9,13 @@ import numpy as np
+ 
+ from .. import brain, config, db, features, llm, risk
+ from . import challenger
++from .. import crypto_shadow
+ from ..broker import Broker
+ from ..marketdata import MarketData
+ from ..timeutil import ET, et_minutes, now_et
+ from .base import Agent
+ 
+-DECIDE_EVERY_S = {"day": 300, "swing": 1800, "long": 2 * 3600}   # long only buys into free slots, so checking often is safe
++DECIDE_EVERY_S = {"day": 300, "swing": 1800, "long": 2 * 3600, "crypto": 600}   # long only buys into free slots, so checking often is safe
+ 
+ 
+ class Trader(Agent):
+@@ -33,6 +34,8 @@ class Trader(Agent):
+ 
+     # ------------------------------------------------------------ main loop
+     def step(self):
++        if self.desk.name == "crypto":
++            return self._crypto_step()
+         d = self.desk.name
+         closed = self.broker.sync(d)
+         if closed:
+@@ -64,6 +67,52 @@ class Trader(Agent):
+             self._decide()
+             db.kv_set(f"last_decide:{d}", datetime.now(timezone.utc).timestamp())
+ 
++    # ------------------------------------------------------------ crypto (24/7)
++    def _crypto_step(self):
++        self._wait = 60
++        if self.broker.sync("crypto"):
++            db.kv_set("evolve_request:crypto", db.now_iso())
++        open_ = self.broker.ledger("crypto", ("open",))
++        if open_:   # targets and time limits are watched here; the downside stop also sits at Alpaca
++            snaps = self.md.snapshots([p["symbol"] for p in open_])
++            now = db.now_iso()
++            for p in open_:
++                px = (snaps.get(p["symbol"]) or {}).get("price")
++                if not px:
++                    continue
++                if p["target_price"] and px >= p["target_price"]:
++                    self.broker.close_position(p, "target")
++                elif p["stop_price"] and px <= p["stop_price"]:
++                    self.broker.close_position(p, "stop")
++                elif p["exit_deadline"] and p["exit_deadline"] <= now:
++                    self.broker.close_position(p, "max holding time")
++        n_open = len(self.broker.ledger("crypto"))
++        if not risk.crypto_enabled():
++            self.activity(f"Crypto desk switched off - no new trades ({n_open} position(s) still managed)")
++            return
++        last = db.kv_get("last_decide:crypto", 0)
++        if datetime.now(timezone.utc).timestamp() - last < DECIDE_EVERY_S["crypto"]:
++            self.activity(f"Watching {n_open} crypto position(s), 24/7")
++            return
++        db.kv_set("last_decide:crypto", datetime.now(timezone.utc).timestamp())
++        champ = brain.champion("crypto")
++        stg = crypto_shadow.stage(champ)
++        if stg["stage"] == "training":
++            self.activity("Sitting out while Darwin trains a crypto brain good enough to test")
++            return
++        # forward "exam" on live prices: paper trades only, no orders
++        self.md.update_crypto(config.CRYPTO_UNIVERSE)
++        fdf = features.live_features(self.desk, config.CRYPTO_UNIVERSE)
++        scored = brain.score_live("crypto", champ, fdf) if not fdf.empty else None
++        prices = {s: v["price"] for s, v in self.md.snapshots(config.CRYPTO_UNIVERSE).items()}
++        crypto_shadow.run(champ, scored, prices, self.desk.max_positions)
++        crypto_shadow.check_revoke(champ)
++        stg = crypto_shadow.stage(champ)
++        if stg["stage"] != "cleared":
++            self.activity(stg["label"])
++            return
++        self._decide()
++
+     # ------------------------------------------------------------ exits
+     def _enforce_deadlines(self):
+         now = db.now_iso()
+@@ -73,6 +122,8 @@ class Trader(Agent):
+ 
+     def _deadline(self, hold_bars) -> str:
+         d = self.desk.name
++        if d == "crypto":
++            return (datetime.now(timezone.utc) + timedelta(hours=hold_bars)).isoformat()
+         if d == "day":
+             end = now_et() + timedelta(minutes=15 * hold_bars)
+             cap = now_et().replace(hour=15, minute=50, second=0, microsecond=0)
+@@ -129,6 +180,9 @@ class Trader(Agent):
+         if st == "untrained":
+             self._note("waiting for the training lab to evolve a first brain")
+             return
++        if st == "probation" and d == "crypto":
++            self._note("sitting out: no crypto brain has cleared the strict bar on unseen data yet")
++            return
+         if st == "probation" and not config.PROBATION_TRADING:
+             self._note("sitting out: no brain has proven an edge on unseen data yet")
+             return
+@@ -151,6 +205,8 @@ class Trader(Agent):
+             return
+         if d == "day":
+             self.md.update_intraday(syms)
++        elif d == "crypto":
++            self.md.update_crypto(syms)
+         fdf = features.live_features(self.desk, syms)
+         if fdf.empty:
+             return
+@@ -187,6 +243,8 @@ class Trader(Agent):
+             for i in range(0, len(through), 6):
+                 debates.update(challenger.review(d, through[i:i + 6], self.name))
+         mult = config.PROBATION_SIZE if st == "probation" else 1.0
++        if d == "crypto" and crypto_shadow.stage(champ).get("half_size"):
++            mult = 0.5
+         for p in picks:
+             v = verdicts.get(p["symbol"], {})
+             deb = debates.get(p["symbol"], {})
+@@ -200,8 +258,26 @@ class Trader(Agent):
+                 conviction *= max(0.5, min(size, config.PROFILE["conv_cap"]))
+             if deb.get("mode") == "veto":
+                 conviction *= deb.get("size", 1.0)
+-            qty = 0 if vetoed or challenged else risk.position_qty(d, acct, alp, p["price"], p["stop_pct"], conviction)
+-            record = "veto" if vetoed else "challenged" if challenged else ("buy" if qty > 0 else "no_size")
++            strict_fail = ""
++            if d == "crypto":   # crypto only trades when EVERY check agrees, with high confidence
++                if not v or not deb:
++                    strict_fail = "no AI review available - crypto never trades on numbers alone"
++                elif v.get("action") != "buy":
++                    strict_fail = "portfolio manager said skip"
++                elif deb.get("verdict") != "proceed" or (deb.get("confidence") or 0) < 0.7:
++                    strict_fail = f"Challenger not confident enough ({deb.get('verdict')}, {deb.get('confidence')})"
++                elif (p["brief"].get("sentiment") or 0) < 0:
++                    strict_fail = "research sentiment is negative"
++            if d == "crypto":
++                notional = 0.0 if vetoed or challenged or strict_fail else risk.position_notional(
++                    d, acct, alp, p["price"], p["stop_pct"], conviction)
++                qty = round(notional / p["price"], 6) if notional >= 10 else 0
++            else:
++                qty = 0 if vetoed or challenged else risk.position_qty(d, acct, alp, p["price"], p["stop_pct"], conviction)
++            record = ("veto" if vetoed else "challenged" if challenged else "strict_skip" if strict_fail
++                      else ("buy" if qty > 0 else "no_size"))
++            if strict_fail:
++                v = dict(v, reason=(v.get("reason", "") + " | strict crypto gate: " + strict_fail).strip(" |"))
+             reason = v.get("reason", "") + (f" | Challenger: {deb.get('verdict')} - {deb.get('reasoning', '')}" if deb else "")
+             db.execute("INSERT INTO decisions (desk, symbol, ts, action, score, llm_verdict, size_mult, reason, price) "
+                        "VALUES (?,?,?,?,?,?,?,?,?)",
+@@ -218,7 +294,10 @@ class Trader(Agent):
+                         "features": p["features"],
+                         "llm": {"verdict": v, "sentiment": p["brief"].get("sentiment"),
+                                 "summary": p["brief"].get("summary"), "debate": deb}}
+-                self.broker.buy_bracket(d, p["symbol"], qty, p["price"], p["stop_pct"], p["target_pct"], meta)
++                if d == "crypto":
++                    self.broker.buy_crypto(p["symbol"], qty * p["price"], p["price"], p["stop_pct"], p["target_pct"], meta)
++                else:
++                    self.broker.buy_bracket(d, p["symbol"], qty, p["price"], p["stop_pct"], p["target_pct"], meta)
+                 self.activity(f"Bought {qty} {p['symbol']} @ ${p['price']:.2f}")
+                 db.event(self.name, f"BUY {qty} {p['symbol']} @ ${p['price']:.2f}")
+                 acct = self.broker.account()
+diff --git a/trader/brain.py b/trader/brain.py
+index 0ed4314..2bb2a18 100644
+--- a/trader/brain.py
++++ b/trader/brain.py
+@@ -27,6 +27,11 @@ def status(champ) -> str:
+         return "untrained"
+     h = champ.get("holdout", {})
+     desk = config.DESKS[champ["id"].split("-")[0]]
++    if desk.name == "crypto":
++        # The strictest bar in the firm: a clear win on unseen data AND in training, THEN a passed forward
++        # shadow test on live prices (see crypto_shadow.py). Until then it sits out entirely.
++        from . import crypto_shadow
++        return "active" if crypto_shadow.backtest_ok(champ) and crypto_shadow.cleared(champ) else "probation"
+     enough = h.get("trades", 0) >= max(30, desk.min_trades * 0.35)
+     if (champ["holdout_fit"] or 0) >= 0.5 and h.get("total", 0) > 0 and enough:
+         return "active"
+diff --git a/trader/broker.py b/trader/broker.py
+index ad59a20..9101787 100644
+--- a/trader/broker.py
++++ b/trader/broker.py
+@@ -9,7 +9,7 @@ from datetime import datetime, timezone
+ 
+ from alpaca.trading.client import TradingClient
+ from alpaca.trading.enums import OrderClass, OrderSide, QueryOrderStatus, TimeInForce
+-from alpaca.trading.requests import (GetOrderByIdRequest, GetOrdersRequest, MarketOrderRequest,
++from alpaca.trading.requests import (GetOrderByIdRequest, GetOrdersRequest, MarketOrderRequest, StopLimitOrderRequest,
+                                      StopLossRequest, TakeProfitRequest)
+ 
+ from . import config, db, log
+@@ -47,7 +47,12 @@ class Broker:
+         return out
+ 
+     def alpaca_positions(self) -> dict:
+-        return {p.symbol: {"qty": _f(p.qty), "avg": _f(p.avg_entry_price), "price": _f(p.current_price),
++        def sym(p):   # Alpaca reports crypto positions as BTCUSD; everywhere else we use BTC/USD
++            s = p.symbol
++            if "crypto" in str(p.asset_class).lower() and "/" not in s and s.endswith("USD"):
++                s = s[:-3] + "/USD"
++            return s
++        return {sym(p): {"qty": _f(p.qty), "avg": _f(p.avg_entry_price), "price": _f(p.current_price),
+                          "value": _f(p.market_value), "upl": _f(p.unrealized_pl),
+                          "uplpc": _f(p.unrealized_plpc)}
+                 for p in self.client.get_all_positions()}
+@@ -103,6 +108,49 @@ class Broker:
+         L.info("[%s] BUY %s x%d @~%.2f  stop %.2f  target %.2f", desk, symbol, qty, price, stop_price, target_price)
+         return {"id": cur.lastrowid, "order_id": str(o.id)}
+ 
++    def buy_crypto(self, symbol, notional, price, stop_pct, target_pct, meta: dict) -> dict:
++        """Crypto can't use bracket orders on Alpaca: buy at market now; once filled, sync() places a protective
++        stop order at Alpaca, and the crypto trader sells at the target / time limit itself (it runs 24/7)."""
++        if config.KILL_SWITCH.exists():
++            raise RuntimeError("Kill switch file STOP_TRADING present - no new buys")
++        qty = round(notional / price, 6)
++        coid = f"crypto-{symbol.replace('/', '')}-{uuid.uuid4().hex[:10]}"
++        req = MarketOrderRequest(symbol=symbol, qty=qty, side=OrderSide.BUY, time_in_force=TimeInForce.GTC,
++                                 client_order_id=coid)
++        with _lock:
++            if self.owner(symbol):
++                raise RuntimeError(f"{symbol} already held by the {self.owner(symbol)} desk")
++            o = self.client.submit_order(req)
++            cur = db.execute(
++                "INSERT INTO positions (desk, symbol, status, qty, entry_price, entry_time, stop_price, "
++                "target_price, stop_pct, exit_deadline, entry_order_id, leg_ids, genome_id, score, llm_json, features) "
++                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
++                ("crypto", symbol, "pending", qty, price, db.now_iso(), round(price * (1 - stop_pct), 6),
++                 round(price * (1 + target_pct), 6), stop_pct, meta.get("deadline"), str(o.id), "[]",
++                 meta.get("genome_id"), meta.get("score"), json.dumps(meta.get("llm")), json.dumps(meta.get("features"))))
++        L.info("[crypto] BUY %s x%s @~%.4f  stop -%.1f%%  target +%.1f%%", symbol, qty, price, stop_pct * 100,
++               target_pct * 100)
++        return {"id": cur.lastrowid, "order_id": str(o.id)}
++
++    def _crypto_protect(self, pos, filled_qty, fill_price):
++        """After a crypto buy fills: record the real quantity held (fees come out of the coins) and park a
++        stop-limit sell at Alpaca so the downside is protected even if this PC is off."""
++        held = self.alpaca_positions().get(pos["symbol"], {}).get("qty") or filled_qty
++        stop_price = round(fill_price * (1 - pos["stop_pct"]), 6 if fill_price < 10 else 2)
++        target_price = round(fill_price * (1 + (pos["target_price"] / pos["entry_price"] - 1)), 6 if fill_price < 10 else 2)
++        legs = []
++        try:
++            so = self.client.submit_order(StopLimitOrderRequest(
++                symbol=pos["symbol"], qty=held, side=OrderSide.SELL, time_in_force=TimeInForce.GTC,
++                stop_price=stop_price, limit_price=round(stop_price * 0.99, 6 if fill_price < 10 else 2)))
++            legs = [str(so.id)]
++        except Exception as e:
++            L.warning("[crypto] could not place protective stop for %s: %s (the bot will watch it instead)",
++                      pos["symbol"], e)
++        db.execute("UPDATE positions SET status='open', qty=?, entry_price=?, entry_time=?, stop_price=?, "
++                   "target_price=?, leg_ids=? WHERE id=?",
++                   (held, fill_price, db.now_iso(), stop_price, target_price, json.dumps(legs), pos["id"]))
++
+     def close_position(self, pos: dict, reason: str):
+         """Cancel the bracket's protective legs, then sell at market."""
+         with _lock:
+@@ -127,9 +175,11 @@ class Broker:
+             if qty <= 0:
+                 db.execute("UPDATE positions SET status='open' WHERE id=?", (pos["id"],))
+                 return None
++            crypto = "/" in pos["symbol"]
+             req = MarketOrderRequest(symbol=pos["symbol"], qty=qty, side=OrderSide.SELL,
+-                                     time_in_force=TimeInForce.DAY,      # DAY is required for fractional shares
+-                                     client_order_id=f"{pos['desk']}-x-{pos['symbol']}-{uuid.uuid4().hex[:8]}"[:48])
++                                     # stocks: DAY is required for fractional shares; crypto only allows GTC/IOC
++                                     time_in_force=TimeInForce.GTC if crypto else TimeInForce.DAY,
++                                     client_order_id=f"{pos['desk']}-x-{pos['symbol'].replace('/', '')}-{uuid.uuid4().hex[:8]}"[:48])
+             o = self.client.submit_order(req)
+             db.execute("UPDATE positions SET status='closing', exit_order_id=?, exit_reason=? WHERE id=?",
+                        (str(o.id), reason, pos["id"]))
+@@ -147,7 +197,9 @@ class Broker:
+                 if pos["status"] == "pending":
+                     o = self.order(pos["entry_order_id"])
+                     st = str(o.status.value if hasattr(o.status, "value") else o.status)
+-                    if st == "filled" or (_f(o.filled_qty) > 0 and st in ("canceled", "expired")):
++                    if pos["desk"] == "crypto" and (st == "filled" or (_f(o.filled_qty) > 0 and st in ("canceled", "expired"))):
++                        self._crypto_protect(pos, _f(o.filled_qty), _f(o.filled_avg_price))
++                    elif st == "filled" or (_f(o.filled_qty) > 0 and st in ("canceled", "expired")):
+                         legs = [str(l.id) for l in (o.legs or [])]
+                         db.execute("UPDATE positions SET status='open', qty=?, entry_price=?, entry_time=?, "
+                                    "leg_ids=? WHERE id=?",
+diff --git a/trader/config.py b/trader/config.py
+index ddfc9b9..0e8ec25 100644
+--- a/trader/config.py
++++ b/trader/config.py
+@@ -119,7 +119,7 @@ PROBATION_SIZE = _f("PROBATION_SIZE", PROFILE["probation"])
+ PDT_EQUITY = 25_000.0
+ PDT_BUFFER = _f("PDT_BUFFER", 0.02)          # need 2% above $25k before unlocking, so a dip doesn't trip the rule
+ SMALL_ACCOUNT_MAX_POSITIONS = {"day": _i("SMALL_MAX_POSITIONS_DAY", 2), "swing": _i("SMALL_MAX_POSITIONS_SWING", 5),
+-                               "long": _i("SMALL_MAX_POSITIONS_LONG", 6)}
++                               "long": _i("SMALL_MAX_POSITIONS_LONG", 6), "crypto": _i("MAX_POSITIONS_CRYPTO", 2)}
+ AUTO_REALLOCATE = _b("AUTO_REALLOCATE", True)   # manager moves 5%/week of capital toward the best desk
+ REPORT_TIMES_ET = _s("REPORT_TIMES_ET", "00:30,08:30,16:30")
+ 
+@@ -147,7 +147,7 @@ class Desk:
+     train_symbols: int      # cap on symbols used for evolution (speed / memory)
+     min_trades: int         # fewer simulated trades than this = untrustworthy
+     evolve_cooldown_min: int
+-    periods_per_year: int = 252   # bars per year, for annualizing results
++    periods_per_year: int = 252   # bars per year, for annualizing results (crypto: hourly, 24/7)
+     bench: str = "SPY"            # the "market" each stock is compared against
+     close_targets: bool = False   # True: a profit target only counts if a bar CLOSES above it (no spike fills)
+     holdout_frac: float = 0.25    # most recent share of history kept unseen during training (used to pick champions)
+@@ -184,8 +184,41 @@ DESKS = {
+         history_days=_i("LONG_HISTORY_DAYS", 2200), train_symbols=700, min_trades=60,
+         evolve_cooldown_min=180,
+     ),
++    # Crypto: trades 24/7 on hourly bars, smallest budget, and the strictest bar before it may trade at all.
++    "crypto": Desk(
++        name="crypto", title="Crypto", timeframe="1Hour",
++        sleeve=_f("SLEEVE_CRYPTO", 0.05), sleeve_min=0.0, sleeve_max=0.05,
++        max_positions=_i("MAX_POSITIONS_CRYPTO", 2), risk_per_trade=0.004, daily_loss_pct=0.05,
++        cost_per_side=0.0030, hold_range=(2, 48), stop_range=(1.0, 6.0), target_range=(1.0, 10.0),
++        min_stop=0.012, path_len=48, path_step=1, decision_step=1,
++        # 200 trades: a brain can't win by cherry-picking a few perfect moments - it needs a strategy that works
++        # again and again (~70 trades expected in each later slice)
++        history_days=_i("CRYPTO_HISTORY_DAYS", 2200), train_symbols=20, min_trades=_i("CRYPTO_MIN_TRADES", 200),
++        evolve_cooldown_min=60, periods_per_year=24 * 365, bench="BTC/USD", close_targets=True,
++        # learn on the oldest 60% (2021 boom, 2022 crash, 2023-24), pick champions on the next 20%,
++        # then a final exam on the newest 20% that played no part in choosing the brain
++        holdout_frac=0.2, test_frac=0.2, robust_blocks=4, hidden=_i("CRYPTO_HIDDEN", 4),
++    ),
+ }
++# Only coins that trade nearly every hour on Alpaca. Others (DOGE, LTC, LINK, AVAX, ...) go 20-40% of hours
++# with no trades there, so their prices are unreliable for both testing and trading.
++CRYPTO_UNIVERSE = _list("CRYPTO_SYMBOLS", "BTC/USD,ETH/USD,SOL/USD,XRP/USD")
++CRYPTO_HISTORY_START = _s("CRYPTO_HISTORY_START", "2021-01-01")   # Alpaca's hourly crypto history begins here
++CRYPTO_TRAIN_EVERY_MIN = _i("CRYPTO_TRAIN_EVERY_MIN", 15)   # how often the lab retrains crypto until it's cleared
++# Rush mode: until a crypto brain passes the strict backtest bar, train crypto nonstop and the other
++# desks every few minutes. Switches itself off (back to the normal pace) as soon as one passes.
++TRAINING_RUSH = _b("TRAINING_RUSH", True)
++RUSH_OTHERS_EVERY_MIN = _i("RUSH_OTHERS_EVERY_MIN", 5)
++# Crypto boost (part of rush mode): bigger, longer crypto runs on a worker pool that stays warm, more candidates
++# checked on unseen data, and a fresh gene pool whenever the search stalls. All 6 physical CPU cores are already
++# in use, so this squeezes more out of the same hardware rather than adding cores.
++CRYPTO_BOOST = _b("CRYPTO_BOOST", True)
++BOOST_POP = _i("BOOST_POP", 96)
++BOOST_GENS = _i("BOOST_GENS", 60)
++BOOST_CANDIDATES = _i("BOOST_CANDIDATES", 16)
++BOOST_STALL_RUNS = _i("BOOST_STALL_RUNS", 30)   # runs without a new champion before the gene pool is shaken up
+ LAB_WORKERS = _i("LAB_WORKERS", max(1, min(6, (os.cpu_count() or 2) - 4)))  # CPU cores used for training
++CRYPTO_ENABLED_DEFAULT = _b("CRYPTO_ENABLED", True)   # the Studio toggle overrides this at runtime
+ 
+ 
+ def validate():
+diff --git a/trader/crypto_shadow.py b/trader/crypto_shadow.py
+new file mode 100644
+index 0000000..f0e943b
+--- /dev/null
++++ b/trader/crypto_shadow.py
+@@ -0,0 +1,139 @@
++"""Crypto clearance: the path a crypto brain must walk before it may trade.
++
++  1. training    - the lab keeps evolving brains until one passes the strict backtest bar: validation
++                   (used to pick champions) AND a final exam on the newest data (never used for picking)
++  2. shadow test - that brain "trades" on paper inside the bot, on LIVE prices that didn't exist when it was
++                   chosen (so it can't have been overfit to them). Needs >= 15 trades over >= 7 days, net
++                   profitable, win rate >= 50%.
++  3. cleared     - real (paper-account) trades start at HALF size for the first 10 trades
++  4. revoked     - if real trades go wrong (net loss after 5+ trades, or 3 losses in a row), clearance is
++                   withdrawn and the brain goes back to shadow testing.
++A new champion brain always starts again from step 2."""
++from datetime import datetime, timedelta, timezone
++
++from . import config, db
++
++SHADOW_MIN_TRADES = config._i("CRYPTO_SHADOW_MIN_TRADES", 15)
++SHADOW_MIN_DAYS = config._f("CRYPTO_SHADOW_MIN_DAYS", 7)
++SHADOW_MIN_WINRATE = config._f("CRYPTO_SHADOW_MIN_WINRATE", 0.5)
++HALF_SIZE_TRADES = 10
++
++
++def val_ok(champ) -> bool:
++    """Bar 1 (validation): a clear win on unseen data AND in training. The lab may pick brains by this."""
++    if not champ:
++        return False
++    h, t = champ.get("holdout", {}), champ.get("train", {})
++    return (h.get("trades", 0) >= 30 and h.get("sharpe", 0) >= 1.5 and h.get("winrate", 0) >= 0.55
++            and h.get("total", 0) > 0 and h.get("maxdd", 1) <= 0.15 and t.get("sharpe", 0) >= 1.0)
++
++
++def test_ok(champ) -> bool:
++    """Bar 2 (final exam): the newest slice of history, which played no part in choosing the brain."""
++    x = (champ or {}).get("test") or {}
++    return (x.get("trades", 0) >= 20 and x.get("sharpe", 0) >= 1.0 and x.get("total", 0) > 0
++            and x.get("maxdd", 1) <= 0.15)
++
++
++def backtest_ok(champ) -> bool:
++    """The strict backtest bar: both of the above."""
++    return val_ok(champ) and test_ok(champ)
++
++
++def _since(gid):
++    rev = db.kv_get("crypto_revoked") or {}
++    return rev.get("at", "") if rev.get("genome_id") == gid else ""
++
++
++def shadow_stats(gid) -> dict:
++    rows = db.query("SELECT ret, entry_ts FROM shadow_trades WHERE genome_id=? AND status='closed' AND entry_ts >= ? "
++                    "ORDER BY entry_ts", (gid, _since(gid)))
++    first = db.one("SELECT MIN(entry_ts) t FROM shadow_trades WHERE genome_id=? AND entry_ts >= ?", (gid, _since(gid)))
++    days = 0.0
++    if first and first["t"]:
++        days = (datetime.now(timezone.utc) - datetime.fromisoformat(first["t"])).total_seconds() / 86400
++    n = len(rows)
++    wins = sum(1 for r in rows if r["ret"] > 0)
++    return {"trades": n, "wins": wins, "winrate": wins / n if n else 0.0,
++            "total": sum(r["ret"] for r in rows), "days": round(days, 1),
++            "open": db.one("SELECT COUNT(*) n FROM shadow_trades WHERE genome_id=? AND status='open'", (gid,))["n"]}
++
++
++def cleared(champ) -> bool:
++    c = db.kv_get("crypto_clearance") or {}
++    return bool(champ) and c.get("genome_id") == champ["id"]
++
++
++def stage(champ) -> dict:
++    if not champ or not backtest_ok(champ):
++        why = ("the best brain passed validation but failed the final exam on the newest data" if val_ok(champ)
++               else "no brain has passed the strict backtest bar yet")
++        return {"stage": "training", "label": f"Training - {why}", "genome_id": champ["id"] if champ else None}
++    s = shadow_stats(champ["id"])
++    if cleared(champ):
++        real = db.one("SELECT COUNT(*) n FROM positions WHERE desk='crypto' AND genome_id=? AND status='closed'",
++                      (champ["id"],))["n"]
++        half = real < HALF_SIZE_TRADES
++        return {"stage": "cleared", "genome_id": champ["id"], "shadow": s, "real_trades": real, "half_size": half,
++                "label": f"Cleared to trade{' (half size for its first ' + str(HALF_SIZE_TRADES) + ' trades)' if half else ''}"}
++    return {"stage": "shadow", "genome_id": champ["id"], "shadow": s,
++            "label": f"Shadow testing: {s['trades']}/{SHADOW_MIN_TRADES} trades over {s['days']:.0f}/"
++                     f"{SHADOW_MIN_DAYS:.0f} days, {s['total'] * 100:+.1f}% so far (no real money used)"}
++
++
++def run(champ, scored, prices: dict, max_open: int):
++    """Called by the crypto trader every cycle: manage paper exits, open paper entries, maybe clear the brain."""
++    now = datetime.now(timezone.utc)
++    cost = 2 * config.DESKS["crypto"].cost_per_side
++    # a brain that's no longer champion: its open paper trades are void
++    db.execute("UPDATE shadow_trades SET status='void' WHERE status='open' AND genome_id != ?", (champ["id"],))
++    for t in db.query("SELECT * FROM shadow_trades WHERE status='open' AND genome_id=?", (champ["id"],)):
++        px = prices.get(t["symbol"])
++        if not px:
++            continue
++        r = px / t["entry_price"] - 1
++        reason = ("target" if r >= t["target_pct"] else "stop" if r <= -t["stop_pct"]
++                  else "max holding time" if t["deadline"] <= now.isoformat() else None)
++        if reason:
++            db.execute("UPDATE shadow_trades SET status='closed', exit_ts=?, exit_price=?, ret=?, exit_reason=? WHERE id=?",
++                       (now.isoformat(), px, r - cost, reason, t["id"]))
++    if scored is not None and not scored.empty:
++        open_syms = {r["symbol"] for r in db.query("SELECT symbol FROM shadow_trades WHERE status='open' AND genome_id=?",
++                                                   (champ["id"],))}
++        slots = max_open - len(open_syms)
++        for sym, r in scored[scored["score"] > scored["thr"]].iterrows():
++            if slots <= 0:
++                break
++            if sym in open_syms or not prices.get(sym):
++                continue
++            db.execute("INSERT INTO shadow_trades (genome_id, symbol, entry_ts, entry_price, stop_pct, target_pct, "
++                       "deadline, status) VALUES (?,?,?,?,?,?,?, 'open')",
++                       (champ["id"], sym, now.isoformat(), prices[sym], float(r["stop_pct"]), float(r["target_pct"]),
++                        (now + timedelta(hours=int(r["hold"]))).isoformat()))
++            slots -= 1
++    # graduation
++    if not cleared(champ):
++        s = shadow_stats(champ["id"])
++        if (s["trades"] >= SHADOW_MIN_TRADES and s["days"] >= SHADOW_MIN_DAYS and s["total"] > 0
++                and s["winrate"] >= SHADOW_MIN_WINRATE):
++            db.kv_set("crypto_clearance", {"genome_id": champ["id"], "at": now.isoformat(), "shadow": s})
++            db.event("crypto_trader", f"Crypto brain {champ['id']} passed shadow testing ({s['trades']} paper trades, "
++                                      f"{s['total'] * 100:+.1f}%, {s['winrate']:.0%} wins) - cleared to trade at half size")
++
++
++def check_revoke(champ):
++    """Withdraw clearance if real trades go wrong."""
++    if not cleared(champ):
++        return
++    rows = db.query("SELECT pnl_pct FROM positions WHERE desk='crypto' AND genome_id=? AND status='closed' "
++                    "ORDER BY exit_time DESC", (champ["id"],))
++    rets = [r["pnl_pct"] or 0 for r in rows]
++    why = ""
++    if len(rets) >= 3 and all(r < 0 for r in rets[:3]):
++        why = "3 losing trades in a row"
++    elif len(rets) >= 5 and sum(rets) < 0:
++        why = f"net loss after {len(rets)} trades"
++    if why:
++        db.execute("DELETE FROM kv WHERE k='crypto_clearance'")
++        db.kv_set("crypto_revoked", {"genome_id": champ["id"], "at": datetime.now(timezone.utc).isoformat(), "why": why})
++        db.event("crypto_trader", f"Crypto clearance withdrawn ({why}) - back to shadow testing, no real trades", "warning")
+diff --git a/trader/db.py b/trader/db.py
+index 1eaf580..b96c86f 100644
+--- a/trader/db.py
++++ b/trader/db.py
+@@ -43,6 +43,7 @@ CREATE INDEX IF NOT EXISTS evolution_ts ON evolution_log (ts);
+ CREATE TABLE IF NOT EXISTS llm_usage (day TEXT, provider TEXT, model TEXT, requests INTEGER,
+     tokens INTEGER, errors INTEGER, PRIMARY KEY (day, provider, model));
+ CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT, updated TEXT);
++CREATE TABLE IF NOT EXISTS macro (series TEXT, ts TEXT, value REAL, PRIMARY KEY (series, ts));
+ CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, agent TEXT,
+     level TEXT, msg TEXT);
+ CREATE TABLE IF NOT EXISTS debates (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, desk TEXT, symbol TEXT,
+diff --git a/trader/features.py b/trader/features.py
+index fd46303..2896740 100644
+--- a/trader/features.py
++++ b/trader/features.py
+@@ -4,7 +4,7 @@ the bots learn on history is exactly what they see live."""
+ import numpy as np
+ import pandas as pd
+ 
+-from . import db
++from . import config, db
+ from .timeutil import ET, now_et
+ 
+ DAILY_FEATS = ["r1", "r5", "r20", "r60", "r120", "mom12_1", "d_sma20", "d_sma50", "d_sma200",
+@@ -14,7 +14,7 @@ INTRA_FEATS = ["day_ret", "gap", "r1", "r4", "d_vwap", "rsi", "atr", "vratio", "
+ 
+ 
+ def feature_names(desk_name):
+-    return INTRA_FEATS if desk_name == "day" else DAILY_FEATS
++    return INTRA_FEATS if desk_name == "day" else CRYPTO_FEATS if desk_name == "crypto" else DAILY_FEATS
+ 
+ 
+ def _rsi(c, n=14):
+@@ -51,19 +51,20 @@ def _daily_one(g):
+     return f
+ 
+ 
+-def daily_features(bars: pd.DataFrame) -> pd.DataFrame:
+-    """bars: symbol, ts, o, h, l, c, v (many symbols, must include SPY)."""
++def daily_features(bars: pd.DataFrame, bench: str = "SPY", hourly: bool = False) -> pd.DataFrame:
++    """bars: symbol, ts, o, h, l, c, v (many symbols, must include the benchmark). Also used for hourly crypto
++    bars, where the benchmark is BTC/USD and each "bar" is an hour instead of a day."""
+     parts = []
+     for sym, g in bars.groupby("symbol", sort=False):
+         g = g.sort_values("ts")
+         f = _daily_one(g)
+         parts.append(pd.concat([g, f], axis=1))
+     df = pd.concat(parts, ignore_index=True)
+-    spy = df[df.symbol == "SPY"][["ts", "r20", "r60", "d_sma200"]].rename(
++    spy = df[df.symbol == bench][["ts", "r20", "r60", "d_sma200"]].rename(
+         columns={"r20": "spy_r20", "r60": "spy_r60", "d_sma200": "spy_d200"})
+     df = df.merge(spy, on="ts", how="left")
+     df["rs60"] = df["r60"] - df["spy_r60"]
+-    df["date"] = df["ts"].dt.tz_convert(ET).dt.date
++    df["date"] = df["ts"] if hourly else df["ts"].dt.tz_convert(ET).dt.date
+     return df
+ 
+ 
+@@ -113,6 +114,89 @@ def intraday_features(bars: pd.DataFrame) -> pd.DataFrame:
+     return df
+ 
+ 
++# ---------------------------------------------------------------- crypto (hourly, 24/7)
++# Everything here is known at the moment the hourly bar closes - nothing peeks at the future:
++#   price action over 1h..30d, trend, volatility regime, volume, how the coin moves vs Bitcoin,
++#   how the whole crypto market is moving, time of day / week, Fear & Greed (lagged a full day),
++#   and the US stock market's last completed session.
++CRYPTO_FEATS = ["r1", "r4", "r12", "r24", "r72", "r168", "d_ema24", "d_ema72", "d_ema168", "d_ema720",
++                "rsi", "atr", "vol24", "vol_ratio", "bbpos", "d_hi168", "d_lo168", "d_hi720", "vratio",
++                "btc_r4", "btc_r24", "btc_r168", "btc_d_ema168", "rs24", "rs168", "breadth24",
++                "hod_sin", "hod_cos", "dow_sin", "dow_cos", "fng", "fng_chg7", "spy_r1d", "spy_r5d"]
++GAP_HOURS = 6   # a hole longer than this in a coin's history starts a new, separate stretch
++
++
++def _crypto_one(g):
++    c, h, l, v = g["c"], g["h"], g["l"], g["v"]
++    f = pd.DataFrame(index=g.index)
++    for n in (1, 4, 12, 24, 72, 168):
++        f[f"r{n}"] = c / c.shift(n) - 1
++    for n in (24, 72, 168, 720):
++        f[f"d_ema{n}"] = c / c.ewm(span=n, adjust=False, min_periods=min(n, 168)).mean() - 1
++    f["rsi"] = _rsi(c)
++    f["atr"] = _atr_pct(h, l, c)
++    f["vol24"] = f["r1"].rolling(24).std()
++    f["vol_ratio"] = np.log(f["vol24"] / f["r1"].rolling(168).std())
++    sd = c.rolling(24).std()
++    f["bbpos"] = (c - c.rolling(24).mean()) / (2 * sd.replace(0, np.nan))
++    f["d_hi168"] = c / h.rolling(168).max() - 1
++    f["d_lo168"] = c / l.rolling(168).min() - 1
++    f["d_hi720"] = c / h.rolling(720, min_periods=168).max() - 1
++    # ratio to its own recent average (exchanges' reported volume levels changed over the years)
++    f["vratio"] = np.log((v / v.rolling(24).mean().replace(0, np.nan)).clip(0.05, 20))
++    return f
++
++
++def crypto_features(bars: pd.DataFrame, bench: str = "BTC/USD") -> pd.DataFrame:
++    """bars: hourly symbol, ts, o, h, l, c, v for several coins (must include the benchmark)."""
++    from . import macro
++    parts = []
++    for sym, g in bars.groupby("symbol", sort=False):
++        g = g.sort_values("ts").reset_index(drop=True)
++        seg = (g["ts"].diff() > pd.Timedelta(hours=GAP_HOURS)).cumsum()
++        for k, gg in g.groupby(seg, sort=False):
++            gg = gg.reset_index(drop=True)
++            out = pd.concat([gg, _crypto_one(gg)], axis=1)
++            out["seg"] = f"{sym}#{k}"
++            parts.append(out)
++    df = pd.concat(parts, ignore_index=True)
++    btc = df[df.symbol == bench][["ts", "r4", "r24", "r168", "d_ema168"]].drop_duplicates("ts").rename(
++        columns={"r4": "btc_r4", "r24": "btc_r24", "r168": "btc_r168", "d_ema168": "btc_d_ema168"})
++    df = df.merge(btc, on="ts", how="left")
++    df["rs24"] = df["r24"] - df["btc_r24"]
++    df["rs168"] = df["r168"] - df["btc_r168"]
++    df["breadth24"] = df.groupby("ts")["r24"].transform("mean")
++    t = df["ts"] + pd.Timedelta(hours=1)                                  # the moment the bar closes
++    hod, dow = t.dt.hour + t.dt.minute / 60, t.dt.dayofweek + t.dt.hour / 24
++    df["hod_sin"], df["hod_cos"] = np.sin(2 * np.pi * hod / 24), np.cos(2 * np.pi * hod / 24)
++    df["dow_sin"], df["dow_cos"] = np.sin(2 * np.pi * dow / 7), np.cos(2 * np.pi * dow / 7)
++    df["_t"] = t.astype("datetime64[ns, UTC]")
++    df = df.sort_values("_t")
++    # Fear & Greed: a day's reading counts only from the END of that day (+1 day), to be safe about when it's published
++    fng = macro.fng_series()
++    if not fng.empty:
++        fng = fng.sort_values("ts")
++        fng["fng"] = fng["value"] / 100 - 0.5
++        fng["fng_chg7"] = fng["fng"] - fng["fng"].shift(7)
++        fng["_t"] = (fng["ts"] + pd.Timedelta(days=1)).astype("datetime64[ns, UTC]")
++        df = pd.merge_asof(df, fng[["_t", "fng", "fng_chg7"]], on="_t", direction="backward")
++    else:
++        df["fng"], df["fng_chg7"] = np.nan, np.nan
++    # US stocks: SPY's last fully completed session (a session counts from the following midnight New York time)
++    spy = db.load_bars(["SPY"], "1Day", (df["ts"].min() - pd.Timedelta(days=15)).isoformat())
++    if not spy.empty:
++        spy = spy.sort_values("ts")
++        spy["spy_r1d"] = spy["c"] / spy["c"].shift(1) - 1
++        spy["spy_r5d"] = spy["c"] / spy["c"].shift(5) - 1
++        day = spy["ts"].dt.tz_convert(ET).dt.normalize()
++        spy["_t"] = (day + pd.Timedelta(days=1)).dt.tz_convert("UTC").astype("datetime64[ns, UTC]")
++        df = pd.merge_asof(df, spy[["_t", "spy_r1d", "spy_r5d"]].dropna(), on="_t", direction="backward")
++    else:
++        df["spy_r1d"], df["spy_r5d"] = np.nan, np.nan
++    df["date"] = df["ts"]
++    return df.drop(columns=["_t"]).sort_values(["symbol", "ts"]).reset_index(drop=True)
++
++
+ # ---------------------------------------------------------------- training dataset
+ def _paths(sub: pd.DataFrame, L: int, step: int, same_day: bool):
+     """Future price path after each bar, relative to the NEXT bar's open (the
+@@ -156,24 +240,29 @@ def build_dataset(desk, bars: pd.DataFrame, holdout_frac=0.25, norm=None, start_
+     if intraday:
+         df = intraday_features(bars)
+         df = df[(df["mins"] >= 570) & (df["mins"] <= 915)]   # decide 09:30..15:15 bar closes
++    elif desk.timeframe == "1Hour":
++        now = pd.Timestamp.now(tz="UTC")
++        bars = bars[bars["ts"] + pd.Timedelta(hours=1) <= now]           # completed hours only
++        df = crypto_features(bars, desk.bench)
+     else:
+         today = now_et().date()
+         bars = bars[bars["ts"].dt.tz_convert(ET).dt.date < today]   # completed days only
+         df = daily_features(bars)
+     df = df.replace([np.inf, -np.inf], np.nan)
++    hourly = desk.timeframe == "1Hour"
+     dates = np.array(sorted(df["date"].unique()))
+     date_pos = {d: i for i, d in enumerate(dates)}
+     X, ATR, HI, LO, CL, D, S, SYMS, T = [], [], [], [], [], [], [], [], []
+-    for _, sub in df.groupby("symbol", sort=False):
++    for _, sub in df.groupby("seg" if hourly else "symbol", sort=False):     # crypto: each unbroken stretch on its own
+         sub = sub.reset_index(drop=True)
+         valid, hi, lo, cl = _paths(sub, desk.path_len, desk.path_step, intraday)
+         di = sub["date"].map(date_pos).to_numpy()
+         m = valid & sub[feats + ["atr"]].notna().all(axis=1).to_numpy()
+-        m &= (sub["atr"] > 0).to_numpy() & (sub["c"] >= 5).to_numpy()
++        m &= (sub["atr"] > 0).to_numpy() & ((sub["c"] >= 5).to_numpy() if not hourly else True)
+         sd0 = (start_dates or {}).get(sub["symbol"].iloc[0])
+         if sd0:
+             m &= (sub["date"].astype(str) >= sd0).to_numpy()
+-        if not intraday:
++        if not intraday and not hourly:
+             m &= (sub["dollar_vol"] >= 5e6).fillna(False).to_numpy()
+             m &= (di % desk.decision_step) == 0
+         if not m.any():
+@@ -211,7 +300,14 @@ def build_dataset(desk, bars: pd.DataFrame, holdout_frac=0.25, norm=None, start_
+ def live_features(desk, symbols, today_only=True) -> pd.DataFrame:
+     """Latest feature row per symbol from completed bars in the database."""
+     syms = sorted(set(symbols) | {desk.bench})
+-    if desk.name == "day":
++    if desk.timeframe == "1Hour":
++        since = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=90)).isoformat()   # enough for the 30-day averages
++        bars = db.load_bars(sorted(set(syms) | set(config.CRYPTO_UNIVERSE)), "1Hour", since)   # all coins: market breadth
++        if bars.empty:
++            return pd.DataFrame()
++        bars = bars[bars["ts"] + pd.Timedelta(hours=1) <= pd.Timestamp.now(tz="UTC")]
++        df = crypto_features(bars, desk.bench)
++    elif desk.name == "day":
+         since = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=12)).isoformat()
+         bars = db.load_bars(syms, "15Min", since)
+         if bars.empty:
+diff --git a/trader/macro.py b/trader/macro.py
+new file mode 100644
+index 0000000..beed661
+--- /dev/null
++++ b/trader/macro.py
+@@ -0,0 +1,72 @@
++"""Outside-the-chart market information for the crypto desk (all free, no keys):
++
++  - Crypto Fear & Greed index (alternative.me), daily since 2018 -> a training feature for the crypto brain
++  - Perpetual-futures funding rates (Hyperliquid), live -> extra context for the AI analyst / Challenger only.
++    Funding history only starts in 2023, so it is NOT a brain input: training on it would either throw
++    away the 2021-22 crash years or hand the brain a fake "which era is this?" marker."""
++import json
++import time
++import urllib.request
++from datetime import datetime, timezone
++
++import pandas as pd
++
++from . import db, log
++
++L = log.get("macro")
++_UA = {"User-Agent": "stocksbot/1.0", "Content-Type": "application/json"}
++
++
++def _get(url, payload=None, timeout=20):
++    data = json.dumps(payload).encode() if payload is not None else None
++    with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=_UA), timeout=timeout) as r:
++        return json.loads(r.read())
++
++
++def update_fng(max_age_s=6 * 3600) -> int:
++    """Refresh the daily Fear & Greed history (at most every few hours)."""
++    last = db.kv_get("fng_updated_at") or 0
++    have = db.one("SELECT COUNT(*) n FROM macro WHERE series='fng'")["n"]
++    if have and time.time() - last < max_age_s:
++        return 0
++    try:
++        rows = _get(f"https://api.alternative.me/fng/?limit={0 if have < 100 else 30}&format=json")["data"]
++    except Exception as e:
++        L.warning("fear & greed update failed: %s", e)
++        return 0
++    recs = [("fng", datetime.fromtimestamp(int(r["timestamp"]), timezone.utc).isoformat(), float(r["value"]))
++            for r in rows]
++    db.executemany("INSERT OR REPLACE INTO macro (series, ts, value) VALUES (?,?,?)", recs)
++    db.kv_set("fng_updated_at", time.time())
++    return len(recs)
++
++
++def fng_series() -> pd.DataFrame:
++    """Daily Fear & Greed: ts (start of the UTC day it describes), value 0-100."""
++    rows = db.query("SELECT ts, value FROM macro WHERE series='fng' ORDER BY ts")
++    if not rows:
++        return pd.DataFrame(columns=["ts", "value"])
++    df = pd.DataFrame(rows)
++    df["ts"] = pd.to_datetime(df["ts"], utc=True)
++    return df
++
++
++def latest_fng():
++    r = db.one("SELECT ts, value FROM macro WHERE series='fng' ORDER BY ts DESC LIMIT 1")
++    return r["value"] if r else None
++
++
++def funding_now(max_age_s=1800) -> dict:
++    """Current hourly funding rate per coin on Hyperliquid perps, e.g. {"BTC": 0.0000125}. Positive = longs pay
++    shorts (crowded long). Cached for half an hour; empty dict if the source is unreachable."""
++    cached = db.kv_get("funding_now") or {}
++    if cached and time.time() - cached.get("t", 0) < max_age_s:
++        return cached.get("rates", {})
++    try:
++        meta, ctxs = _get("https://api.hyperliquid.xyz/info", {"type": "metaAndAssetCtxs"})
++        rates = {a["name"]: float(c["funding"]) for a, c in zip(meta["universe"], ctxs) if c.get("funding") is not None}
++    except Exception as e:
++        L.warning("funding rate update failed: %s", e)
++        return cached.get("rates", {})
++    db.kv_set("funding_now", {"t": time.time(), "rates": rates})
++    return rates
+diff --git a/trader/marketdata.py b/trader/marketdata.py
+index 17cb041..ac82092 100644
+--- a/trader/marketdata.py
++++ b/trader/marketdata.py
+@@ -6,10 +6,10 @@ from datetime import datetime, timedelta, timezone
+ 
+ import pandas as pd
+ from alpaca.data.enums import Adjustment, DataFeed
+-from alpaca.data.historical import StockHistoricalDataClient
++from alpaca.data.historical import CryptoHistoricalDataClient, StockHistoricalDataClient
+ from alpaca.data.historical.news import NewsClient
+ from alpaca.data.historical.screener import ScreenerClient
+-from alpaca.data.requests import (MarketMoversRequest, MostActivesRequest, NewsRequest,
++from alpaca.data.requests import (CryptoBarsRequest, CryptoSnapshotRequest, MarketMoversRequest, MostActivesRequest, NewsRequest,
+                                   StockBarsRequest, StockSnapshotRequest)
+ from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+ from alpaca.trading.client import TradingClient
+@@ -20,9 +20,14 @@ from . import config, db, log
+ from .timeutil import ET
+ 
+ L = log.get("data")
+-TF = {"1Day": TimeFrame.Day, "15Min": TimeFrame(15, TimeFrameUnit.Minute)}
++TF = {"1Day": TimeFrame.Day, "15Min": TimeFrame(15, TimeFrameUnit.Minute), "1Hour": TimeFrame.Hour}
+ _daily_lock = threading.Lock()
+ _intraday_lock = threading.Lock()
++_crypto_lock = threading.Lock()
++
++
++def is_crypto(symbol: str) -> bool:
++    return "/" in symbol
+ 
+ 
+ def _retry(fn, tries=3, wait=5):
+@@ -41,6 +46,7 @@ class MarketData:
+         k, s = config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY
+         self.hist = StockHistoricalDataClient(k, s)
+         self.screener = ScreenerClient(k, s)
++        self.crypto = CryptoHistoricalDataClient(k, s)
+         self.news = NewsClient(k, s)
+         self.trading = TradingClient(k, s, paper=config.ALPACA_PAPER)
+ 
+@@ -122,9 +128,66 @@ class MarketData:
+                 n += len(df)
+             return n
+ 
++    def update_crypto(self, symbols, days=None) -> int:
++        """Hourly crypto bars (24/7)."""
++        days = days or config.DESKS["crypto"].history_days
++        with _crypto_lock:
++            now = datetime.now(timezone.utc)
++            last = db.last_bar_ts("1Hour")
++            new = [s for s in symbols if s not in last]
++            old = [s for s in symbols if s in last]
++            n = 0
++            jobs = [(new, now - timedelta(days=days), None), (old, now - timedelta(days=3), None)]
++            # one-time backfill: older history for coins we already have (asked for once per coin and start date)
++            want = max(now - timedelta(days=days), datetime.fromisoformat(config.CRYPTO_HISTORY_START + "T00:00:00+00:00"))
++            first = {r["symbol"]: r["m"] for r in db.query("SELECT symbol, MIN(ts) m FROM bars WHERE tf='1Hour' GROUP BY symbol")}
++            for s in old:
++                key = f"crypto_backfill:{s}"
++                if first.get(s) and first[s] > (want + timedelta(days=2)).isoformat() and db.kv_get(key) != want.isoformat():
++                    jobs.append(([s], want, datetime.fromisoformat(first[s])))
++                    db.kv_set(key, want.isoformat())
++            for group, start, end in jobs:
++                if not group:
++                    continue
++                if end is not None:
++                    L.info("Backfilling hourly %s history from %s", group[0], start.date())
++                try:
++                    df = _retry(lambda: self.crypto.get_crypto_bars(
++                        CryptoBarsRequest(symbol_or_symbols=group, timeframe=TF["1Hour"], start=start, end=end)).df)
++                except Exception as e:
++                    L.warning("crypto bars failed: %s", e)
++                    continue
++                if df is None or df.empty:
++                    continue
++                df = df.reset_index().rename(columns={"timestamp": "ts", "open": "o", "high": "h", "low": "l",
++                                                      "close": "c", "volume": "v"})
++                df["ts"] = pd.to_datetime(df["ts"], utc=True)
++                db.save_bars(df[["symbol", "ts", "o", "h", "l", "c", "v"]], "1Hour")
++                n += len(df)
++            return n
++
+     # ------------------------------------------------------------ live
+-    def snapshots(self, symbols) -> dict:
++    def crypto_snapshots(self, symbols) -> dict:
+         out = {}
++        try:
++            snaps = _retry(lambda: self.crypto.get_crypto_snapshot(CryptoSnapshotRequest(symbol_or_symbols=symbols)))
++        except Exception as e:
++            L.warning("crypto snapshot failed: %s", e)
++            return out
++        for sym, s in snaps.items():
++            if s is None or s.latest_trade is None:
++                continue
++            d, p = s.daily_bar, s.previous_daily_bar
++            out[sym] = {"price": float(s.latest_trade.price), "time": s.latest_trade.timestamp,
++                        "day_open": float(d.open) if d else None, "day_high": float(d.high) if d else None,
++                        "day_low": float(d.low) if d else None, "day_volume": float(d.volume) if d else 0.0,
++                        "prev_close": float(p.close) if p else None}
++        return out
++
++    def snapshots(self, symbols) -> dict:
++        coins = [s for s in symbols if is_crypto(s)]
++        out = self.crypto_snapshots(coins) if coins else {}
++        symbols = [s for s in symbols if not is_crypto(s)]
+         for i in range(0, len(symbols), 200):
+             chunk = symbols[i:i + 200]
+             try:
+@@ -184,7 +247,7 @@ class MarketData:
+         rows = []
+         for i in range(0, len(symbols), 25):
+             chunk = symbols[i:i + 25]
+-            ask = {s: s for s in chunk}
++            ask = {s.replace("/", ""): s for s in chunk}          # crypto news uses BTCUSD, we use BTC/USD
+             try:
+                 res = _retry(lambda: self.news.get_news(NewsRequest(symbols=",".join(ask), start=start,
+                                                                     limit=50, exclude_contentless=False)))
+diff --git a/trader/notify.py b/trader/notify.py
+index 873d566..713677e 100644
+--- a/trader/notify.py
++++ b/trader/notify.py
+@@ -6,6 +6,7 @@ What gets sent (NOTIFY_EVENTS in .env picks which):
+   trade     - a desk opened a position
+   close     - a position closed, with its profit/loss
+   champion  - a desk's training lab promoted a new champion brain (every time, in plain English)
++  stage     - a crypto brain passed its backtests, passed its shadow test, or lost its clearance
+   report    - the 8-hourly report, with the headline numbers (only when trades actually closed)
+   warning   - loss limits, size cuts, AI demotions and other warnings
+ 
+@@ -25,7 +26,7 @@ from . import config, log
+ L = log.get("notify")
+ TOPIC = config._s("NOTIFY_NTFY_TOPIC")
+ SERVER = config._s("NOTIFY_NTFY_SERVER", "https://ntfy.sh").rstrip("/")
+-EVENTS = {e.lower() for e in config._list("NOTIFY_EVENTS", "trade,close,champion,report,warning")}
++EVENTS = {e.lower() for e in config._list("NOTIFY_EVENTS", "trade,close,champion,stage,report,warning")}
+ CLICK_URL = config._s("NOTIFY_CLICK_URL")            # e.g. your Studio's Tailscale address, opened when tapped
+ MAX_PER_DAY = config._i("NOTIFY_MAX_PER_DAY", 80)    # ntfy's free tier allows ~250/day; stay well under
+ ASK_TOPIC = f"{TOPIC}-ask" if TOPIC else ""         # phone -> bot: questions arrive here
+@@ -95,6 +96,8 @@ def on_event(agent: str, msg: str, level: str = "info"):
+             send("trade", f"{desk.title()} desk bought", msg[4:])
+         elif msg.startswith("CLOSED "):
+             send("close", "Position closed", msg[7:])
++        elif "passed shadow testing" in msg or "clearance withdrawn" in msg:      # (new champions: see champion())
++            send("stage", "Crypto desk update", msg)
+         elif level in ("warning", "error"):
+             send("warning", f"Warning from {agent.replace('_', ' ')}", msg, key=f"warn:{msg[:60]}", cooldown_s=3600)
+         elif msg.startswith("capital shifted"):
+@@ -108,6 +111,16 @@ def champion(desk, title, h, old_fitness=None, data=None):
+     msg = (f"Tested on data it never learned from: {h.get('total', 0) * 100:+.1f}% over {h.get('trades', 0)} trades, "
+            f"{h.get('winrate', 0) * 100:.0f}% winners. Quality score {h.get('fitness', 0):.2f}"
+            + (f" (the old champion's: {old_fitness:.2f})." if old_fitness is not None else "."))
++    if desk == "crypto" and data is not None:
++        from . import crypto_shadow
++        if not crypto_shadow.val_ok(data):
++            msg += "\nNot good enough to trade yet (needs 30+ trades, 55%+ winners and a score of 1.5+). Training continues."
++        elif not crypto_shadow.test_ok(data):
++            t = data.get("test") or {}
++            msg += (f"\nPassed the first check, but failed the final exam on the newest data "
++                    f"({t.get('total', 0) * 100:+.1f}% over {t.get('trades', 0)} trades), so it won't trade. Training continues.")
++        else:
++            msg += "\nPassed BOTH checks! It now starts a 7-day paper test on live prices before any real trade."
+     send("champion", f"New {title} champion brain", msg)
+ 
+ 
+@@ -130,7 +143,7 @@ def equity_text() -> str:
+             return "trading"
+         if st == "untrained":
+             return "training"
+-        return "trading small"
++        return "sitting out (still training)" if d == "crypto" else "trading small"
+     desks = ", ".join(f"{d} {word(d)}" for d in config.DESKS)
+     return (f"${a['equity']:,.2f}  ({day * 100:+.2f}% today"
+             + (f", {since * 100:+.2f}% since the start" if since is not None else "") + ")\n"
+diff --git a/trader/personas.py b/trader/personas.py
+index b7aee1a..00b2b6f 100644
+--- a/trader/personas.py
++++ b/trader/personas.py
+@@ -16,6 +16,12 @@ AGENTS = {
+                             bio="Reads SEC filings for fun. Cares about revenue growth, margins and debt."),
+     "long_trader": dict(name="Oakley", role="Long-term investor", desk="long", kind="trader", color="#199e70",
+                         badge="🌳", bio="Unhurried and steady; thinks in months and rebalances once a week."),
++    "crypto_researcher": dict(name="Nova", role="Crypto researcher", desk="crypto", kind="researcher",
++                              color="#e66767", badge="🪙",
++                              bio="Night owl who never sleeps; watches Bitcoin, Ethereum, Solana and XRP around the clock."),
++    "crypto_trader": dict(name="Satoshi", role="Crypto trader", desk="crypto", kind="trader", color="#e66767",
++                          badge="₿", bio="The most cautious bot in the studio: only trades crypto when every check "
++                                        "agrees with high confidence, and happily sits out otherwise."),
+     "challenger": dict(name="Devi", role="The Challenger (devil's advocate)", desk=None, kind="challenger",
+                        color="#d55181", badge="⚖️",
+                        bio="Friendly but relentless skeptic. Argues both sides of every trade before it is placed."),
+diff --git a/trader/report.py b/trader/report.py
+index 74992da..2779fc7 100644
+--- a/trader/report.py
++++ b/trader/report.py
+@@ -81,6 +81,9 @@ def build(broker, since_iso=None) -> str:
+           "_Brain: **active** = proved an edge on data it never trained on; **probation** = no proven edge yet, "
+           f"trading at {config.PROBATION_SIZE:.0%} size; **untrained** = first evolution still running._", ""]
+ 
++    from . import crypto_shadow
++    L += [f"**Crypto desk:** {'ON' if risk.crypto_enabled() else 'OFF'} - "
++          f"{crypto_shadow.stage(brain.champion('crypto'))['label']}", ""]
+ 
+     # ---- closed trades
+     closed = db.query("SELECT * FROM positions WHERE status='closed' AND exit_time>=? ORDER BY exit_time", (since_iso,))
+@@ -175,7 +178,7 @@ def build(broker, since_iso=None) -> str:
+     # ---- health
+     rows = []
+     for name in ["day_researcher", "day_trader", "swing_researcher", "swing_trader", "long_researcher",
+-                 "long_trader", "challenger", "manager", "lab"]:
++                 "long_trader", "crypto_researcher", "crypto_trader", "challenger", "manager", "lab"]:
+         hb = db.kv_get(f"heartbeat:{name}") or {}
+         rows.append([name, _t(hb.get("at", "")), hb.get("status", "never ran")[:80]])
+     errs = db.query("SELECT ts, agent, level, msg FROM events WHERE ts>=? AND level IN ('error','warning') "
+diff --git a/trader/risk.py b/trader/risk.py
+index 1ce4ae8..4abced4 100644
+--- a/trader/risk.py
++++ b/trader/risk.py
+@@ -10,12 +10,18 @@ from .timeutil import now_et
+ def sleeves() -> dict:
+     s = db.kv_get("sleeves") or {}
+     missing = {k: d.sleeve for k, d in config.DESKS.items() if k not in s}
+-    if missing:                      # e.g. a desk added later gets its default share
++    if missing:                      # e.g. a desk added later (crypto) gets its default share
+         s.update(missing)
+         db.kv_set("sleeves", s)
+     return s
+ 
+ 
++def crypto_enabled() -> bool:
++    """The on/off switch in the Studio."""
++    v = db.kv_get("crypto_enabled")
++    return config.CRYPTO_ENABLED_DEFAULT if v is None else bool(v)
++
++
+ def size_mult(desk) -> float:
+     """Manager-set multiplier (drops to 0.5 when live results fall short of backtests)."""
+     return float(db.kv_get(f"size_mult:{desk}", 1.0))
+diff --git a/trader/status.py b/trader/status.py
+index d3d7029..48b4404 100644
+--- a/trader/status.py
++++ b/trader/status.py
+@@ -13,7 +13,7 @@ def main():
+     print(f"\nAccount ({'PAPER' if config.ALPACA_PAPER else 'LIVE'}): equity ${a['equity']:,.2f}  cash ${a['cash']:,.2f}  {chg}")
+     print("\nAgents:")
+     for name in ["day_researcher", "day_trader", "swing_researcher", "swing_trader", "long_researcher",
+-                 "long_trader", "challenger", "manager", "lab"]:
++                 "long_trader", "crypto_researcher", "crypto_trader", "challenger", "manager", "lab"]:
+         hb = db.kv_get(f"heartbeat:{name}") or {}
+         age = ""
+         if hb.get("at"):
+diff --git a/trader/studio_server.py b/trader/studio_server.py
+index e8ac1d3..bdd4c52 100644
+--- a/trader/studio_server.py
++++ b/trader/studio_server.py
+@@ -20,7 +20,7 @@ STATIC = config.ROOT / "studio"
+ PORT = config._i("STUDIO_PORT", 8765)
+ HOST = config._s("STUDIO_HOST", "127.0.0.1")          # 0.0.0.0 only behind a private network (e.g. Tailscale)
+ PASSWORD = config._s("STUDIO_PASSWORD")               # set this whenever the Studio is reachable from the internet
+-IDLE_PREFIXES = ("watching", "market closed", "waiting", "sitting out", "no fresh", "brain found no")
++IDLE_PREFIXES = ("crypto desk switched off", "crypto desk is switched off", "watching", "market closed", "waiting", "sitting out", "no fresh", "brain found no")
+ 
+ _cache = {}
+ _cache_lock = threading.Lock()
+@@ -87,7 +87,7 @@ def state():
+         "now_et": now_et().strftime("%a %b %d · %I:%M %p ET"),
+         "market": {"open": clock.get("is_open", False),
+                    "next_open": str(clock.get("next_open", "")), "next_close": str(clock.get("next_close", ""))},
+-        "paper": config.ALPACA_PAPER, "profile": config.RISK_PROFILE,
++        "paper": config.ALPACA_PAPER, "profile": config.RISK_PROFILE, "crypto_enabled": risk.crypto_enabled(),
+         "account": {"equity": eq, "cash": acct.get("cash"),
+                     "day_change": (eq / acct["last_equity"] - 1) if eq and acct.get("last_equity") else None,
+                     "since_start": (eq / start["equity"] - 1) if eq and start.get("equity") else None},
+@@ -199,9 +199,11 @@ def dashboard():
+                        "FROM debates ORDER BY id DESC LIMIT 25")
+     for x in debates:
+         x["pros"], x["cons"] = json.loads(x["pros"] or "[]"), json.loads(x["cons"] or "[]")
++    from . import crypto_shadow
++    crypto_stage = crypto_shadow.stage(brain.champion("crypto"))
+     spy_now = (db.one("SELECT spy FROM equity WHERE spy IS NOT NULL ORDER BY ts DESC LIMIT 1") or {}).get("spy")
+     return {"account": acct, "start": db.kv_get("start") or {}, "spy_now": spy_now, "desks": desks,
+-            "positions": positions,
++            "crypto_stage": crypto_stage, "positions": positions,
+             "trades": trades, "decisions": decisions, "debates": debates,
+             "llm": llm.usage_summary(1), "llm_available": {t: llm.available(t) for t in ("smart", "fast")},
+             "challenger": db.kv_get("challenger_scorecard") or {},
+@@ -211,6 +213,11 @@ def dashboard():
+ 
+ # ---------------------------------------------------------------- chat
+ DESK_RULES = {
++    "crypto": "Crypto desk rules: trades Bitcoin, Ethereum, Solana and XRP 24/7 on hourly bars with the smallest "
++              "budget in the firm (5% of equity). It only trades when its brain cleared a strict bar on unseen data "
++              "AND the portfolio manager approves AND the Challenger says proceed with at least 70% confidence AND "
++              "research sentiment isn't negative - otherwise it sits out. Each buy gets a protective stop order at "
++              "Alpaca; the bot sells at the target or time limit. The owner can switch it on/off in the Studio.",
+     "day": "Day desk rules: trades 9:45am-3:15pm ET on 15-minute bars, every entry is a bracket order (stop-loss + "
+            "take-profit at Alpaca), and every position is sold by 3:50pm ET - nothing is held overnight.",
+     "swing": "Swing desk rules: decides from daily bars between 9:45am and 3:30pm ET, bracket orders (GTC stop-loss + "
+@@ -246,6 +253,9 @@ def _context(aid):
+         n = db.one("SELECT COUNT(*) n, SUM(pnl>0) w, SUM(pnl) p FROM positions WHERE desk=? AND status='closed' "
+                    "AND genome_id != 'legacy'", (dk,))
+         lines.append(DESK_RULES[dk])
++        if dk == "crypto":
++            from . import crypto_shadow
++            lines.append("Crypto training stage right now: " + crypto_shadow.stage(brain.champion("crypto"))["label"])
+         lines.append(f"[{dk} desk] brain status {brain.status(champ)}; capital share {risk.sleeves()[dk]:.0%}; "
+                      f"live closed trades {n['n']} ({n['w'] or 0} wins, P&L ${n['p'] or 0:,.2f}); backtest on unseen "
+                      f"data: {h.get('trades', 0)} trades, {100 * h.get('total', 0):+.1f}%, win rate "
+@@ -417,6 +427,11 @@ class Handler(BaseHTTPRequestHandler):
+                 return self._send(200, chat(aid, msg))
+             if u.path == "/api/report/new":
+                 return self._send(200, new_report())
++            if u.path == "/api/crypto":
++                on = bool(body.get("enabled"))
++                db.kv_set("crypto_enabled", on)
++                db.event("manager", f"Owner switched the crypto desk {'ON' if on else 'OFF'} in the Studio")
++                return self._send(200, {"enabled": on})
+             return self._send(404, {"error": "not found"})
+         except Exception as e:
+             L.warning("POST %s failed: %s", u.path, e)
+diff --git a/trader/web.py b/trader/web.py
+index b2cc171..170b5d5 100644
+--- a/trader/web.py
++++ b/trader/web.py
+@@ -42,7 +42,7 @@ def google_news(query: str, limit=8) -> list:
+ 
+ def store_web_news(symbol: str, company: str = "") -> int:
+     if "/" in symbol:
+-        q = company or symbol
++        q = company or symbol.split("/")[0] + " crypto"
+     else:
+         q = f'"{symbol}" stock' if not company else f'{company} {symbol} stock'
+     items = google_news(q)

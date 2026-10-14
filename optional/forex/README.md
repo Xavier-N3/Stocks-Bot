@@ -33,6 +33,8 @@ for it to matter.
 2. In OANDA's web platform: **My Account → Manage API Access → Generate** a token. Copy it.
 
 ### Step 2: put the forex desk back into the bot
+**First install the crypto desk** (`optional/crypto`): forex reuses its strict testing system.
+
 Easiest: ask Claude **"install the forex desk from optional/forex"**.
 
 Or do it yourself. In PowerShell, from the `Stocks bot` folder:
