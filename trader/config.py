@@ -154,6 +154,7 @@ class Desk:
     test_frac: float = 0.0        # an even later share, never used for picking: the final exam for a new champion
     robust_blocks: int = 1        # >1: training score = consistency across this many eras, not one lucky stretch
     hidden: int = 8               # neurons in the brain's hidden layer (smaller = simpler rules, less memorizing)
+    max_stop: float = 0.5         # widest stop-loss allowed, as a fraction of the entry price (training AND live)
 
 
 DESKS = {
@@ -183,8 +184,11 @@ DESKS = {
         min_stop=0.06, path_len=50, path_step=5, decision_step=5,
         history_days=_i("LONG_HISTORY_DAYS", 2200), train_symbols=700, min_trades=60,
         evolve_cooldown_min=180,
+        max_stop=_f("MAX_STOP_LONG", 0.15),   # a real safety net: never let a position fall more than 15%
     ),
 }
+# At most this many open positions per sector on a desk, so one sector's bad day can't sink the whole desk
+MAX_PER_SECTOR = {"swing": _i("MAX_PER_SECTOR_SWING", 3), "long": _i("MAX_PER_SECTOR_LONG", 3)}
 LAB_WORKERS = _i("LAB_WORKERS", max(1, min(6, (os.cpu_count() or 2) - 4)))  # CPU cores used for training
 
 

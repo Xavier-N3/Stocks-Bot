@@ -52,7 +52,7 @@ def score(dec, X):
 
 def trade_levels(dec, desk, atr):
     """Stop / target as fractions of entry price, from the brain's ATR multiples."""
-    stop = max(dec["stop"] * atr, desk.min_stop)
+    stop = min(max(dec["stop"] * atr, desk.min_stop), desk.max_stop)
     target = max(dec["target"] * atr, desk.min_stop)
     return stop, target
 
@@ -96,7 +96,7 @@ def simulate(vec, ds, desk, part="train", trades_out=None):
 
     Hh = max(1, min(dec["hold"], desk.path_len))
     atr = ds["atr"][rows]
-    stop = np.maximum(dec["stop"] * atr, desk.min_stop)
+    stop = np.minimum(np.maximum(dec["stop"] * atr, desk.min_stop), desk.max_stop)
     tgt = np.maximum(dec["target"] * atr, desk.min_stop)
     lo, hi, cl = ds["lo"][rows, :Hh], ds["hi"][rows, :Hh], ds["cl"][rows, :Hh]
     sh = lo <= -stop[:, None]

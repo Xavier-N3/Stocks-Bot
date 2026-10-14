@@ -47,7 +47,7 @@ def score_live(desk_name, champ, fdf: pd.DataFrame) -> pd.DataFrame:
     dec = evolution.decode(champ["vec"], len(feats), desk)
     f["score"] = evolution.score(dec, X)
     f["thr"] = dec["thr"]
-    f["stop_pct"] = np.maximum(dec["stop"] * f["atr"], desk.min_stop).clip(upper=0.5)
+    f["stop_pct"] = np.maximum(dec["stop"] * f["atr"], desk.min_stop).clip(upper=desk.max_stop)
     f["target_pct"] = np.maximum(dec["target"] * f["atr"], desk.min_stop)
     f["hold"] = dec["hold"]
     return f.sort_values("score", ascending=False)

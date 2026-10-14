@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
-from .. import brain, config, db, features, llm, risk
+from .. import brain, config, db, features, llm, risk, universe
 from . import challenger
 from ..broker import Broker
 from ..marketdata import MarketData
@@ -146,6 +146,11 @@ class Trader(Agent):
         vetoed = {r["symbol"] for r in db.query("SELECT symbol FROM decisions WHERE desk=? AND action IN ('veto','challenged') AND ts>=?",
                                                 (d, cool))}
         syms = [s for s in brief if s not in vetoed and self.broker.owner(s) is None and not risk.symbol_blocked(d, s)]
+        cap = config.MAX_PER_SECTOR.get(d)
+        if cap:     # spread the desk across sectors: no new buys in a sector that already has `cap` positions
+            held = [universe.info(p["symbol"]).get("sector") for p in self.broker.ledger(d)]
+            full = {sec for sec in held if sec and held.count(sec) >= cap}
+            syms = [s for s in syms if universe.info(s).get("sector") not in full]
         if not syms:
             self._note("no fresh research briefs to act on")
             return
