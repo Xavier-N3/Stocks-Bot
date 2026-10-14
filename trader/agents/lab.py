@@ -118,8 +118,11 @@ class Lab(Agent):
         if champ is not None and len(champ["vec"]) == evolution.n_genes(len(ds["feats"]), desk.hidden):
             champ_h = evolution.simulate(champ["vec"], ds, desk, "holdout")
         margin = 0.05
+        # a proven champion (enough trades on unseen data to trade at full size) can only be replaced by a
+        # challenger that is just as proven - never by a high score on a handful of lucky trades
+        need = max(30, desk.min_trades * 0.35) if champ is not None and brain.status(champ) == "active" else 5
         promote = champ_h is None or (best["holdout"]["fitness"] > champ_h["fitness"] + margin
-                                      and best["holdout"]["trades"] >= 5)
+                                      and best["holdout"]["trades"] >= need)
         note = ""
         if promote:
             gid = f"{name}-{datetime.now(timezone.utc):%Y%m%d%H%M}-{uuid.uuid4().hex[:4]}"
