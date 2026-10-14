@@ -35,6 +35,10 @@ for it to matter.
 ### Step 2: put the forex desk back into the bot
 **First install the crypto desk** (`optional/crypto`): forex reuses its strict testing system.
 
+> **Note (Oct 14, 2026):** the bot has changed a lot since forex was parked, so `install.ps1` now stops with
+> merge conflicts (safely: it changes nothing). Ask Claude to install it; it can fit `forex_desk.patch` into
+> the current code by hand.
+
 Easiest: ask Claude **"install the forex desk from optional/forex"**.
 
 Or do it yourself. In PowerShell, from the `Stocks bot` folder:
