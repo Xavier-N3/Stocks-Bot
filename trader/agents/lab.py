@@ -26,9 +26,17 @@ class Lab(Agent):
         return 60
 
     def step(self):
-        for name in config.DESKS:
+        # priority order (day, long-term, then swing); the lowest-priority desk only trains when nothing
+        # above it needed the lab this round
+        order = [d.lower() for d in config.LAB_PRIORITY if d.lower() in config.DESKS]
+        order += [d for d in config.DESKS if d not in order]
+        busy = False
+        for i, name in enumerate(order):
+            if i == len(order) - 1 and busy:
+                break
             if self._data_ready(name) and self._due(name):
                 self._evolve(name)
+                busy = True
 
     def _data_ready(self, name):
         desk = config.DESKS[name]
@@ -46,7 +54,7 @@ class Lab(Agent):
         req = db.kv_get(f"evolve_request:{name}")
         if req and req > last and age >= timedelta(minutes=config.DESKS[name].evolve_cooldown_min):
             return True
-        return age >= timedelta(hours=20)
+        return age >= timedelta(minutes=config.TRAIN_EVERY_MIN.get(name, 20 * 60))
 
     def _symbols(self, name):
         desk = config.DESKS[name]

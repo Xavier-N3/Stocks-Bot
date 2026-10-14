@@ -189,6 +189,11 @@ DESKS = {
 }
 # At most this many open positions per sector on a desk, so one sector's bad day can't sink the whole desk
 MAX_PER_SECTOR = {"swing": _i("MAX_PER_SECTOR_SWING", 3), "long": _i("MAX_PER_SECTOR_LONG", 3)}
+# Training schedule: the lab retrains each desk at least this often (minutes), in this priority order.
+# Day trading gets fresh 15-minute data all day; long-term and swing get one new daily bar a day.
+LAB_PRIORITY = _list("LAB_PRIORITY", "day,long,swing")
+TRAIN_EVERY_MIN = {"day": _i("TRAIN_EVERY_MIN_DAY", 60), "long": _i("TRAIN_EVERY_MIN_LONG", 360),
+                   "swing": _i("TRAIN_EVERY_MIN_SWING", 1440)}
 LAB_WORKERS = _i("LAB_WORKERS", max(1, min(6, (os.cpu_count() or 2) - 4)))  # CPU cores used for training
 
 

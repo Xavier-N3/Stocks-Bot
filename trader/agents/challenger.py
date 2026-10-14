@@ -28,6 +28,7 @@ def review(desk_name: str, picks: list, agent_name: str) -> dict:
     ctx = db.kv_get("market_context") or {}
     lessons = db.query("SELECT text FROM lessons WHERE desk=? ORDER BY id DESC LIMIT 5", (desk_name,))
     card = db.kv_get("challenger_scorecard") or {}
+    memory = training_memory(desk_name)
     lines = []
     for p in picks:
         b = p.get("brief") or {}
@@ -47,6 +48,7 @@ def review(desk_name: str, picks: list, agent_name: str) -> dict:
               "Use 'reduce' when the case is genuinely balanced. Reply with JSON only.")
     user = (f"Desk: {desk.title}. Market backdrop: {ctx.get('summary', 'n/a')} (risk {ctx.get('risk', '?')}/5)\n"
             f"Your track record: {card.get('text', 'no record yet')}\n"
+            + (memory + "\n" if memory else "") +
             "Recent desk lessons:\n" + ("\n".join(f"- {l['text']}" for l in lessons) or "- none") +
             "\n\nProposed trades:\n" + "\n".join(lines) +
             '\n\nJSON: {"debates": [{"symbol": "X", "pros": ["...", "..."], "cons": ["...", "..."], '
@@ -84,6 +86,41 @@ def review(desk_name: str, picks: list, agent_name: str) -> dict:
     return out
 
 
+# ---------------------------------------------------------------- learning from her own record
+def _is_right(verdict, ret):
+    """proceed = right if the stock rose; reject = right if it fell (a loser avoided); reduce = right unless the
+    stock clearly rose (> +1%, when full size would have been better)."""
+    if verdict == "proceed":
+        return ret > 0
+    if verdict == "reject":
+        return ret < 0
+    return ret <= 0.01
+
+
+def training_memory(desk_name) -> str:
+    """What Devi has learned so far: her calibration and the lessons she wrote from her own past calls."""
+    graded = db.query("SELECT verdict, confidence, correct FROM challenger_lessons")
+    if not graded:
+        return ""
+    lines = []
+    for v in ("proceed", "reduce", "reject"):
+        g = [r for r in graded if r["verdict"] == v]
+        if g:
+            lines.append(f"{v}: right {sum(r['correct'] for r in g)}/{len(g)}")
+    hi = [r for r in graded if (r["confidence"] or 0) >= 0.7]
+    calib = f"; when you were 70%+ confident you were right {sum(r['correct'] for r in hi)}/{len(hi)}" if hi else ""
+    out = ["What happened after your past rulings: " + ", ".join(lines) + calib + "."]
+    lessons = db.query("SELECT symbol, verdict, later_ret, correct, lesson FROM challenger_lessons WHERE lesson IS NOT NULL "
+                       "AND desk=? ORDER BY ts DESC LIMIT 6", (desk_name,))
+    lessons += db.query("SELECT symbol, verdict, later_ret, correct, lesson FROM challenger_lessons WHERE lesson IS NOT NULL "
+                        "AND desk!=? ORDER BY ts DESC LIMIT 3", (desk_name,))
+    if lessons:
+        out.append("Lessons you wrote from your own past calls (apply them):")
+        out += [f"- {l['symbol']} ({l['verdict']}, then moved {100 * (l['later_ret'] or 0):+.1f}%, "
+                f"{'right' if l['correct'] else 'WRONG'}): {l['lesson']}" for l in lessons]
+    return "\n".join(out)
+
+
 class Challenger(Agent):
     """Between debates: keep score of past rulings against what prices did next."""
     name = "challenger"
@@ -91,6 +128,46 @@ class Challenger(Agent):
 
     def wait_seconds(self):
         return 1800
+
+    def _learn(self):
+        """Grade every ruling whose outcome is now known, and have Devi write a short lesson from the instructive
+        ones (all wrong calls, plus right calls on big moves) - those lessons go into her next debates."""
+        rows = db.query("SELECT d.* FROM debates d LEFT JOIN challenger_lessons l ON l.debate_id = d.id "
+                        "WHERE d.later_ret IS NOT NULL AND l.debate_id IS NULL ORDER BY d.ts LIMIT 40")
+        if not rows:
+            return
+        teach = []
+        for r in rows:
+            right = _is_right(r["verdict"], r["later_ret"])
+            db.execute("INSERT OR IGNORE INTO challenger_lessons (debate_id, ts, desk, symbol, verdict, confidence, later_ret, "
+                       "correct) VALUES (?,?,?,?,?,?,?,?)", (r["id"], r["ts"], r["desk"], r["symbol"], r["verdict"],
+                                                             r["confidence"], r["later_ret"], int(right)))
+            if not right or abs(r["later_ret"]) >= 0.03:
+                teach.append((r, right))
+        for i in range(0, min(len(teach), 12), 6):          # small batches stay inside the free AI limits
+            batch = teach[i:i + 6]
+            cases = "\n\n".join(
+                f"id {r['id']}: {r['desk']} desk, {r['symbol']}. You ruled {r['verdict'].upper()} "
+                f"(confidence {r['confidence']}). Your reasoning: {r['reasoning']}\n"
+                f"  pros: {'; '.join(json.loads(r['pros'] or '[]'))}\n  cons: {'; '.join(json.loads(r['cons'] or '[]'))}\n"
+                f"  What happened next: the price moved {100 * r['later_ret']:+.2f}% -> you were {'RIGHT' if right else 'WRONG'}"
+                + ("" if right else " - you were TOO CAUTIOUS (it rose)" if r["verdict"] != "proceed" else
+                   " - you were NOT CAUTIOUS ENOUGH (it fell)") + "."
+                for r, right in batch)
+            res = llm.chat("You are Devi, the devil's advocate on a trading desk, reviewing your own past rulings to get "
+                           "better. For each case write ONE short, specific, reusable lesson (max 30 words): what you "
+                           "should weigh more or less next time. Generic advice like 'be careful' is useless. "
+                           "Reply with JSON only.",
+                           cases + '\n\nJSON: {"lessons": [{"id": 123, "lesson": "..."}]}',
+                           tier="fast", max_tokens=700, agent="challenger")
+            for it in ((res or {}).get("json") or {}).get("lessons", []) or []:
+                try:
+                    db.execute("UPDATE challenger_lessons SET lesson=? WHERE debate_id=?",
+                               (str(it.get("lesson", ""))[:300], int(it.get("id"))))
+                except (TypeError, ValueError):
+                    continue
+        graded = db.one("SELECT COUNT(*) n, SUM(correct) c FROM challenger_lessons")
+        db.event(self.name, f"Studied {len(rows)} past ruling(s): right {graded['c'] or 0} of {graded['n']} so far")
 
     def step(self):
         horizon = {"day": 6, "swing": 24 * 7, "long": 24 * 30}
@@ -106,6 +183,7 @@ class Challenger(Agent):
                 px = (snaps.get(r["symbol"]) or {}).get("price")
                 if px and r["price"]:
                     db.execute("UPDATE debates SET later_ret=? WHERE id=?", (px / r["price"] - 1, r["id"]))
+        self._learn()
         stats = {r["verdict"]: r for r in db.query(
             "SELECT verdict, COUNT(*) n, AVG(later_ret) a FROM debates WHERE later_ret IS NOT NULL GROUP BY verdict")}
         parts = [f"{v}: {s['n']} calls, avg move after {100 * (s['a'] or 0):+.2f}%" for v, s in stats.items()]

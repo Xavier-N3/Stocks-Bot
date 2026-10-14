@@ -271,6 +271,10 @@ def _context(aid):
             lines.append(f"Decision {x['ts'][5:16]} {x['symbol']}: {x['action']} - {x['reason'] or ''}"[:300])
     if p["kind"] == "challenger":
         lines.append(f"Your scorecard: {(db.kv_get('challenger_scorecard') or {}).get('text', 'none yet')}")
+        from .agents.challenger import training_memory
+        mem = training_memory("")
+        if mem:
+            lines.append(mem)
         for x in db.query("SELECT ts, desk, symbol, verdict, reasoning, pros, cons FROM debates ORDER BY id DESC LIMIT 8"):
             lines.append(f"Debate {x['ts'][5:16]} {x['desk']} {x['symbol']}: {x['verdict']} - {x['reasoning']} "
                          f"PROS {x['pros']} CONS {x['cons']}"[:500])
