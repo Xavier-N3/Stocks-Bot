@@ -23,7 +23,7 @@ class Lab(Agent):
         self.cache = {}
 
     def wait_seconds(self):
-        return 60
+        return 20          # check often: training runs back to back in priority order
 
     def step(self):
         # priority order (day, long-term, then swing); the lowest-priority desk only trains when nothing
@@ -104,9 +104,9 @@ class Lab(Agent):
         champ = brain.champion(name)
         first = champ is None
         market_open = self.broker.clock()["is_open"]
-        budget = 300 if first else (45 if name == "day" and market_open else 150)
-        gens = 40 if first else 15
-        pop_size = 32
+        budget = 300 if first else (90 if name == "day" and market_open else 180)
+        pop_size, run_gens = config.RUN_SIZE.get(name, (32, 15))
+        gens = 40 if first else run_gens
         pop = db.kv_get(f"population:{name}")
         self.activity(f"Breeding {pop_size} {name} brains on {config.LAB_WORKERS} CPU cores, up to {gens} generations "
                       f"on {len(ds['X']):,} historical setups")
@@ -117,7 +117,7 @@ class Lab(Agent):
         champ_h = None
         if champ is not None and len(champ["vec"]) == evolution.n_genes(len(ds["feats"]), desk.hidden):
             champ_h = evolution.simulate(champ["vec"], ds, desk, "holdout")
-        margin = 0.05
+        margin = config.PROMOTE_MARGIN
         # a proven champion (enough trades on unseen data to trade at full size) can only be replaced by a
         # challenger that is just as proven - never by a high score on a handful of lucky trades
         need = max(30, desk.min_trades * 0.35) if champ is not None and brain.status(champ) == "active" else 5

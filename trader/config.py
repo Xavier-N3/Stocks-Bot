@@ -192,8 +192,13 @@ MAX_PER_SECTOR = {"swing": _i("MAX_PER_SECTOR_SWING", 3), "long": _i("MAX_PER_SE
 # Training schedule: the lab retrains each desk at least this often (minutes), in this priority order.
 # Day trading gets fresh 15-minute data all day; long-term and swing get one new daily bar a day.
 LAB_PRIORITY = _list("LAB_PRIORITY", "day,long,swing")
-TRAIN_EVERY_MIN = {"day": _i("TRAIN_EVERY_MIN_DAY", 60), "long": _i("TRAIN_EVERY_MIN_LONG", 360),
-                   "swing": _i("TRAIN_EVERY_MIN_SWING", 1440)}
+TRAIN_EVERY_MIN = {"day": _i("TRAIN_EVERY_MIN_DAY", 30), "long": _i("TRAIN_EVERY_MIN_LONG", 60),
+                   "swing": _i("TRAIN_EVERY_MIN_SWING", 180)}
+# brains per generation and generations per training run (bigger = deeper search per run)
+RUN_SIZE = {"day": (32, 20), "long": (48, 25), "swing": (32, 15)}
+# a new brain must beat the champion's unseen-data score by this much: with frequent retraining, small wins
+# are often just luck
+PROMOTE_MARGIN = _f("PROMOTE_MARGIN", 0.10)
 LAB_WORKERS = _i("LAB_WORKERS", max(1, min(6, (os.cpu_count() or 2) - 4)))  # CPU cores used for training
 
 

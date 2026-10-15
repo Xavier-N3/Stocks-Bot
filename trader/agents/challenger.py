@@ -127,7 +127,7 @@ class Challenger(Agent):
     title = "Challenger (devil's advocate)"
 
     def wait_seconds(self):
-        return 1800
+        return 600         # score past rulings and study the outcomes every 10 minutes
 
     def _learn(self):
         """Grade every ruling whose outcome is now known, and have Devi write a short lesson from the instructive
