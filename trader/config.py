@@ -120,7 +120,9 @@ PDT_EQUITY = 25_000.0
 PDT_BUFFER = _f("PDT_BUFFER", 0.02)          # need 2% above $25k before unlocking, so a dip doesn't trip the rule
 SMALL_ACCOUNT_MAX_POSITIONS = {"day": _i("SMALL_MAX_POSITIONS_DAY", 2), "swing": _i("SMALL_MAX_POSITIONS_SWING", 5),
                                "long": _i("SMALL_MAX_POSITIONS_LONG", 6)}
-AUTO_REALLOCATE = _b("AUTO_REALLOCATE", True)   # manager moves 5%/week of capital toward the best desk
+AUTO_REALLOCATE = _b("AUTO_REALLOCATE", True)   # manager moves money daily toward the desks making money
+REALLOCATE_STEP = _f("REALLOCATE_STEP", 0.05)   # most a losing desk gives up per day (share of total equity)
+MAX_NEW_PER_DAY = {"long": _i("MAX_NEW_PER_DAY_LONG", 2)}   # buy gradually instead of filling every slot at once
 REPORT_TIMES_ET = _s("REPORT_TIMES_ET", "00:30,08:30,16:30")
 
 
@@ -160,7 +162,7 @@ class Desk:
 DESKS = {
     "day": Desk(
         name="day", title="Day trading", timeframe="15Min",
-        sleeve=_f("SLEEVE_DAY", 0.20), sleeve_min=0.10, sleeve_max=0.40,
+        sleeve=_f("SLEEVE_DAY", 0.20), sleeve_min=0.15, sleeve_max=0.60,
         max_positions=_i("MAX_POSITIONS_DAY", 5), risk_per_trade=0.005, daily_loss_pct=0.04,
         cost_per_side=0.0005, hold_range=(2, 26), stop_range=(0.5, 4.0), target_range=(0.5, 8.0),
         min_stop=0.004, path_len=26, path_step=1, decision_step=1,
@@ -169,7 +171,7 @@ DESKS = {
     ),
     "swing": Desk(
         name="swing", title="Swing trading", timeframe="1Day",
-        sleeve=_f("SLEEVE_SWING", 0.35), sleeve_min=0.20, sleeve_max=0.50,
+        sleeve=_f("SLEEVE_SWING", 0.35), sleeve_min=0.10, sleeve_max=0.40,
         max_positions=_i("MAX_POSITIONS_SWING", 8), risk_per_trade=0.0075, daily_loss_pct=0.05,
         cost_per_side=0.0005, hold_range=(2, 20), stop_range=(1.0, 5.0), target_range=(1.0, 10.0),
         min_stop=0.015, path_len=20, path_step=1, decision_step=1,
@@ -178,13 +180,14 @@ DESKS = {
     ),
     "long": Desk(
         name="long", title="Long-term investing", timeframe="1Day",
-        sleeve=_f("SLEEVE_LONG", 0.45), sleeve_min=0.30, sleeve_max=0.60,
+        sleeve=_f("SLEEVE_LONG", 0.45), sleeve_min=0.25, sleeve_max=0.60,
         max_positions=_i("MAX_POSITIONS_LONG", 12), risk_per_trade=_f("RISK_PER_TRADE_LONG", 0.0125), daily_loss_pct=0.08,
         cost_per_side=0.0005, hold_range=(4, 50), stop_range=(3.0, 15.0), target_range=(4.0, 40.0),
         min_stop=0.06, path_len=50, path_step=5, decision_step=5,
         history_days=_i("LONG_HISTORY_DAYS", 2200), train_symbols=700, min_trades=60,
         evolve_cooldown_min=180,
         max_stop=_f("MAX_STOP_LONG", 0.15),   # a real safety net: never let a position fall more than 15%
+        robust_blocks=3,                      # must make money in every era of its history, not one lucky run
     ),
 }
 # At most this many open positions per sector on a desk, so one sector's bad day can't sink the whole desk

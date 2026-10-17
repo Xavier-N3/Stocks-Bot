@@ -60,8 +60,8 @@ class Manager(Agent):
             for d in config.DESKS:
                 self._reality_check(d)
         self._maybe_report()
-        if self._every("sleeves", 6 * 3600):
-            self._weekly_sleeves()
+        if self._every("sleeves", 1800):
+            self._daily_sleeves()
         if self._every("prune", 24 * 3600):
             db.execute("DELETE FROM briefs WHERE created < ?", ((datetime.now(timezone.utc) - timedelta(days=30)).isoformat(),))
             db.execute("DELETE FROM news WHERE ts < ?", ((datetime.now(timezone.utc) - timedelta(days=120)).isoformat(),))
@@ -189,36 +189,70 @@ class Manager(Agent):
                 db.kv_set(f"llm_mode:{d}", "veto")
                 db.event(self.name, f"[{d}] AI vetoes now add value: veto power restored")
 
-    def _weekly_sleeves(self):
-        """Once a week, move 5% of capital from the weakest desk to the strongest
-        (only with enough live trades to judge, and within each desk's limits)."""
+    def _desk_totals(self, alp) -> dict:
+        """Each desk's total profit so far: closed trades + what its open positions are up or down right now."""
+        out = {}
+        for d in config.DESKS:
+            r = db.one("SELECT SUM(pnl) p FROM positions WHERE desk=? AND status='closed' AND genome_id != 'legacy'", (d,))
+            upl = sum(alp.get(p["symbol"], {}).get("upl", 0) for p in self.broker.ledger(d, ("open",)))
+            out[d] = round((r["p"] or 0) + upl, 2)
+        return out
+
+    def _daily_sleeves(self):
+        """Every weekday after the close: desks that made money get more of the account, desks that lost money get
+        less. Based on each desk's profit over the last 5 trading days (closed trades + open positions), measured
+        against the money it had. A losing desk gives up at most REALLOCATE_STEP of the account per day, never
+        drops below its floor, and the money goes to the winners in proportion to how well they did."""
         if not config.AUTO_REALLOCATE:
             return
-        week = now_et().strftime("%G-W%V")
-        if now_et().weekday() != 6 or db.kv_get("sleeves_week") == week:
+        n = now_et()
+        day = n.strftime("%Y-%m-%d")
+        if n.weekday() >= 5 or n.hour * 60 + n.minute < 16 * 60 + 15 or db.kv_get("sleeves_day") == day:
             return
-        db.kv_set("sleeves_week", week)
-        sl = risk.sleeves()
-        since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-        perf = {}
         acct = self.broker.account()
-        for d in config.DESKS:
-            r = db.one("SELECT COUNT(*) n, SUM(pnl) p FROM positions WHERE desk=? AND status='closed' AND exit_time>=? "
-                       "AND genome_id != 'legacy'", (d, since))
-            if (r["n"] or 0) >= 15:
-                perf[d] = (r["p"] or 0) / (acct["equity"] * sl[d])
-        if len(perf) < 2:
+        alp = self.broker.alpaca_positions()
+        totals = self._desk_totals(alp)
+        hist = [h for h in (db.kv_get("desk_pnl_hist") or []) if h["date"] != day]
+        sl = risk.sleeves()
+        sl = {d: sl.get(d, config.DESKS[d].sleeve) for d in config.DESKS}
+        if hist:
+            base = hist[-5]["totals"] if len(hist) >= 5 else hist[0]["totals"]
+            pnl = {d: totals[d] - base.get(d, 0) for d in config.DESKS}
+        else:            # first run: last 7 days of closed trades + open positions
+            since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            pnl = {}
+            for d in config.DESKS:
+                r = db.one("SELECT SUM(pnl) p FROM positions WHERE desk=? AND status='closed' AND exit_time>=? "
+                           "AND genome_id != 'legacy'", (d, since))
+                pnl[d] = (r["p"] or 0) + sum(alp.get(p["symbol"], {}).get("upl", 0) for p in self.broker.ledger(d, ("open",)))
+        db.kv_set("desk_pnl_hist", (hist + [{"date": day, "totals": totals}])[-30:])
+        db.kv_set("sleeves_day", day)
+        score = {d: pnl[d] / max(1.0, acct["equity"] * sl[d]) for d in config.DESKS}
+        losers = [d for d in score if score[d] < 0]
+        winners = [d for d in score if score[d] > 0]
+        if not losers or not winners:
             return
-        best, worst = max(perf, key=perf.get), min(perf, key=perf.get)
-        if perf[best] - perf[worst] < 0.01:
+        freed = 0.0
+        for d in losers:
+            give = min(config.REALLOCATE_STEP, max(0.0, sl[d] - config.DESKS[d].sleeve_min))
+            sl[d] = round(sl[d] - give, 3)
+            freed += give
+        if freed <= 0:
             return
-        move = min(0.05, sl[worst] - config.DESKS[worst].sleeve_min, config.DESKS[best].sleeve_max - sl[best])
-        if move > 0:
-            sl[worst] = round(sl[worst] - move, 3)
-            sl[best] = round(sl[best] + move, 3)
-            db.kv_set("sleeves", sl)
-            db.event(self.name, f"capital shifted {move * 100:.0f}% from {worst} to {best} desk (30-day returns on "
-                                f"capital {perf[worst] * 100:+.1f}% vs {perf[best] * 100:+.1f}%)")
+        total = sum(score[d] for d in winners)
+        left = freed
+        for d in sorted(winners, key=lambda x: -score[x]):
+            take = min(freed * score[d] / total, config.DESKS[d].sleeve_max - sl[d], left)
+            sl[d] = round(sl[d] + take, 3)
+            left -= take
+        if left > 1e-6:        # winners were full: hand it back to the losers rather than lose track of it
+            for d in losers:
+                back = min(left, config.DESKS[d].sleeve_max - sl[d])
+                sl[d] = round(sl[d] + back, 3)
+                left -= back
+        db.kv_set("sleeves", sl)
+        summary = ", ".join(f"{d} {pnl[d]:+,.0f}$ -> {sl[d] * 100:.0f}%" for d in config.DESKS)
+        db.event(self.name, f"capital shifted toward the desks making money (last 5 trading days): {summary}")
 
     # ------------------------------------------------------------ equity + reports
     def _snapshot_equity(self):

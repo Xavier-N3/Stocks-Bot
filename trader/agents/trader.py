@@ -162,6 +162,15 @@ class Trader(Agent):
         scored = brain.score_live(d, champ, fdf)
         cands = scored[scored["score"] > scored["thr"]]
         slots = risk.max_positions(d, acct) - len(self.broker.ledger(d))
+        day_cap = config.MAX_NEW_PER_DAY.get(d)
+        if day_cap:     # build positions gradually: at most `day_cap` new buys per day for this desk
+            today = now_et().replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
+            bought = db.one("SELECT COUNT(*) n FROM positions WHERE desk=? AND entry_time >= ? AND genome_id != 'legacy'",
+                            (d, today))["n"]
+            slots = min(slots, day_cap - bought)
+            if slots <= 0:
+                self._note(f"already bought {bought} today - building positions gradually ({day_cap} a day max)")
+                return
         cands = cands.head(min(max(0, slots) + 2, 12))       # a couple of spares in case some get vetoed
         if cands.empty:
             self._note("brain found no stock above its entry threshold")
@@ -192,6 +201,7 @@ class Trader(Agent):
             for i in range(0, len(through), 6):
                 debates.update(challenger.review(d, through[i:i + 6], self.name))
         mult = config.PROBATION_SIZE if st == "probation" else 1.0
+        room = slots if day_cap else None          # daily buy limit for desks that build positions gradually
         for p in picks:
             v = verdicts.get(p["symbol"], {})
             deb = debates.get(p["symbol"], {})
@@ -218,12 +228,16 @@ class Trader(Agent):
             if not ok:
                 self._note(why)
                 break
+            if room is not None and room <= 0:
+                break
             try:
                 meta = {"deadline": self._deadline(p["hold"]), "genome_id": champ["id"], "score": p["score"],
                         "features": p["features"],
                         "llm": {"verdict": v, "sentiment": p["brief"].get("sentiment"),
                                 "summary": p["brief"].get("summary"), "debate": deb}}
                 self.broker.buy_bracket(d, p["symbol"], qty, p["price"], p["stop_pct"], p["target_pct"], meta)
+                if room is not None:
+                    room -= 1
                 self.activity(f"Bought {qty} {p['symbol']} @ ${p['price']:.2f}")
                 db.event(self.name, f"BUY {qty} {p['symbol']} @ ${p['price']:.2f}")
                 acct = self.broker.account()

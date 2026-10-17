@@ -108,6 +108,12 @@ Pick which notifications you get with `NOTIFY_EVENTS`. Test anytime: `.venv\Scri
 Since a stopped bot can't send anything, add a free **healthchecks.io** check URL as `HEALTHCHECK_URL`. It gets
 pinged every 5 minutes and alerts you (by email, or through ntfy too) if the pings stop.
 
+## Money follows results
+
+Every weekday after the close the manager looks at each desk's profit over the last 5 trading days (closed
+trades + open positions). Desks that lost money give up to 5% of the account per day to the desks that made
+money, in proportion to how well they did. Floors keep every desk alive: day 15%, swing 10%, long-term 25%.
+
 ## Risk profile (`RISK_PROFILE` in `.env`)
 
 `conservative`, `balanced` or `aggressive` (this account uses **aggressive**: about 2x the risk per trade,
