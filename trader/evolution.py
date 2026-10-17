@@ -12,6 +12,7 @@ import numpy as np
 
 HIDDEN = 8
 N_PARAMS = 4   # threshold, stop, target, hold
+DAY_CLOSE_ALL_MIN = 950   # 3:50pm New York in minutes: day trades must be planned to finish by then (= config)
 
 
 def n_genes(n_feats, hidden=HIDDEN):
@@ -95,6 +96,13 @@ def simulate(vec, ds, desk, part="train", trades_out=None):
         rows, d = rows[keep], d[keep]
 
     Hh = max(1, min(dec["hold"], desk.path_len))
+    if intraday:
+        # only trades whose planned hold fits before the 3:50pm close-out: the bar closes (tod + 15), we buy, then
+        # hold Hh more 15-minute bars - a trade that would be cut off by the clock is never taken
+        fits = ds["tod"][rows] + 15 * (Hh + 1) <= DAY_CLOSE_ALL_MIN
+        rows, d = rows[fits], d[fits]
+        if len(rows) == 0:
+            return empty
     atr = ds["atr"][rows]
     stop = np.minimum(np.maximum(dec["stop"] * atr, desk.min_stop), desk.max_stop)
     tgt = np.maximum(dec["target"] * atr, desk.min_stop)

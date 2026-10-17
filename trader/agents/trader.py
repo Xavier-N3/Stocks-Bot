@@ -181,6 +181,9 @@ class Trader(Agent):
             price = (snaps.get(sym) or {}).get("price")
             if not price:
                 continue
+            if d == "day" and et_minutes() + 15 * int(r["hold"]) > config.DAY_CLOSE_ALL_MIN:
+                self._note(f"skipped {sym}: its planned {int(r['hold']) * 15}-minute hold wouldn't finish before 3:50pm")
+                continue
             picks.append({"symbol": sym, "price": price, "score": float(r["score"]), "thr": float(r["thr"]),
                           "stop_pct": float(r["stop_pct"]), "target_pct": float(r["target_pct"]),
                           "hold": int(r["hold"]), "brief": brief.get(sym, {}),

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderClass, OrderSide, QueryOrderStatus, TimeInForce
-from alpaca.trading.requests import (GetOrderByIdRequest, GetOrdersRequest, MarketOrderRequest,
+from alpaca.trading.requests import (GetOrderByIdRequest, GetOrdersRequest, MarketOrderRequest, ReplaceOrderRequest,
                                      StopLossRequest, TakeProfitRequest)
 
 from . import config, db, log
@@ -102,6 +102,23 @@ class Broker:
                  json.dumps(meta.get("llm")), json.dumps(meta.get("features"))))
         L.info("[%s] BUY %s x%d @~%.2f  stop %.2f  target %.2f", desk, symbol, qty, price, stop_price, target_price)
         return {"id": cur.lastrowid, "order_id": str(o.id)}
+
+    def raise_stop(self, pos: dict, new_stop: float) -> bool:
+        """Move a position's protective stop-loss UP (never down) at Alpaca, and record it in the ledger."""
+        new_stop = round(new_stop, 2)
+        if pos["stop_price"] and new_stop <= pos["stop_price"]:
+            return False
+        legs = json.loads(pos.get("leg_ids") or "[]")
+        for i, lid in enumerate(legs):
+            o = self.order(lid)
+            if str(getattr(o.order_type, "value", o.order_type)) == "stop":
+                new = self.client.replace_order_by_id(lid, ReplaceOrderRequest(stop_price=new_stop))
+                legs[i] = str(new.id)          # a replaced order gets a new id at Alpaca
+                db.execute("UPDATE positions SET stop_price=?, stop_pct=?, leg_ids=? WHERE id=?",
+                           (new_stop, 1 - new_stop / pos["entry_price"], json.dumps(legs), pos["id"]))
+                L.info("[%s] %s stop-loss raised %.2f -> %.2f", pos["desk"], pos["symbol"], pos["stop_price"] or 0, new_stop)
+                return True
+        return False
 
     def close_position(self, pos: dict, reason: str):
         """Cancel the bracket's protective legs, then sell at market."""

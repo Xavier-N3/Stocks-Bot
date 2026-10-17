@@ -202,6 +202,7 @@ RUN_SIZE = {"day": (32, 20), "long": (48, 25), "swing": (32, 15)}
 # a new brain must beat the champion's unseen-data score by this much: with frequent retraining, small wins
 # are often just luck
 PROMOTE_MARGIN = _f("PROMOTE_MARGIN", 0.10)
+DAY_CLOSE_ALL_MIN = 950        # 3:50pm New York: every day-trading position is closed by then
 LAB_WORKERS = _i("LAB_WORKERS", max(1, min(6, (os.cpu_count() or 2) - 4)))  # CPU cores used for training
 
 
